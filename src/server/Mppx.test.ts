@@ -1243,6 +1243,7 @@ describe('server events', () => {
     const first = await handle(new Request('https://example.com/resource'))
     expect(first.status).toBe(402)
     if (first.status !== 402) throw new Error()
+
     const paid = await handle(
       new Request('https://example.com/resource', {
         headers: {
