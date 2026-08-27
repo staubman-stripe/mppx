@@ -246,9 +246,10 @@ export type OnPaymentSuccessFn<method extends Method> = (parameters: {
   request: DeepReadonly<z.output<method['schema']['request']>>
   /**
    * Server-side request after defaults and request hooks, before the method
-   * request schema's output transforms.
+   * request schema's output transforms. Absent during standalone credential
+   * verification when no route options are supplied.
    */
-  requestInput: DeepReadonly<z.input<method['schema']['request']>>
+  requestInput?: DeepReadonly<z.input<method['schema']['request']>> | undefined
 }) => MaybePromise<void>
 
 export type ComposableHooks<method extends Method> = {

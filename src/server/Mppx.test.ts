@@ -1537,7 +1537,7 @@ describe('server events', () => {
     })
     handler.onPaymentSuccess((context) => {
       events.push(
-        `success:${context.receipt.reference}:${context.input}:${context.capturedRequest?.url.pathname}`,
+        `success:${context.receipt.reference}:${context.input}:${context.capturedRequest?.url.pathname}:${context.requestInput?.amount}`,
       )
     })
 
@@ -1554,7 +1554,41 @@ describe('server events', () => {
     )
 
     expect(result.reference).toBe('tx-standalone')
-    expect(events).toEqual(['success:tx-standalone:undefined:/standalone'])
+    expect(events).toEqual(['success:tx-standalone:undefined:/standalone:1000'])
+  })
+
+  test('omits request input from standalone verification without route options', async () => {
+    const successContexts: object[] = []
+    const serverMethod = Method.toServer(eventCharge, {
+      onPaymentSuccess(context) {
+        successContexts.push(context)
+      },
+      async verify() {
+        return receipt('tx-standalone')
+      },
+    })
+    const handler = Mppx.create({
+      methods: [serverMethod],
+      realm,
+      secretKey,
+    })
+    handler.onPaymentSuccess((context) => {
+      successContexts.push(context)
+    })
+
+    const first = await handler.charge(options())(new Request('https://example.com/resource'))
+    expect(first.status).toBe(402)
+    if (first.status !== 402) throw new Error()
+
+    await handler.verifyCredential(
+      Credential.from({
+        challenge: Challenge.fromResponse(first.challenge),
+        payload: { token: 'valid' },
+      }),
+    )
+
+    expect(successContexts).toHaveLength(2)
+    for (const context of successContexts) expect(context).not.toHaveProperty('requestInput')
   })
 
   test('per-method onPaymentSuccess hook fires on successful payment', async () => {
@@ -1961,7 +1995,7 @@ describe('server events', () => {
       seen.eventAdmin = context.credential?.payload.admin
       seen.eventEnvelopeAmount = context.envelope?.request.amount
       seen.eventRequestAmount = context.request.amount
-      seen.eventRequestInput = context.requestInput.inputOnly
+      seen.eventRequestInput = context.requestInput?.inputOnly
     })
     const handle = handler.charge({
       amount: '25',
