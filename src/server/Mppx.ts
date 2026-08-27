@@ -178,7 +178,10 @@ export type PaymentSuccessContext<
   input?: Transport.InputOf<transport> | undefined
   method: ServerMethodDescriptor<method>
   receipt: Receipt.Receipt
+  /** Canonical request represented by the challenge. */
   request: z.output<method['schema']['request']>
+  /** Resolved method input before request-schema output transforms. */
+  requestInput: z.input<method['schema']['request']>
 }>
 
 /** Options for standalone credential verification. */
@@ -533,6 +536,7 @@ export function create<
             input: ctx.input,
             receipt: ctx.receipt,
             request: ctx.request,
+            requestInput: ctx.requestInput,
           })
         }
       }) as never)
@@ -871,6 +875,7 @@ export function create<
         method: mi,
         receipt,
         request: parsedRequest,
+        requestInput: request,
       }) as never,
     )
 
@@ -1266,6 +1271,7 @@ function createMethodFn(parameters: createMethodFn.Parameters): createMethodFn.R
                   method,
                   receipt: authorized.receipt,
                   request: parsedRequest,
+                  requestInput: request,
                 }) as never,
               )
               return success(authorized.receipt, {
@@ -1503,6 +1509,7 @@ function createMethodFn(parameters: createMethodFn.Parameters): createMethodFn.R
           method,
           receipt: receiptData,
           request: parsedRequest,
+          requestInput: request,
         }) as never,
       )
 
@@ -1770,6 +1777,7 @@ function createPaymentSuccessContext(parameters: {
   method: Method.Method | ServerMethodDescriptor
   receipt: Receipt.Receipt
   request: Record<string, unknown>
+  requestInput: Record<string, unknown>
 }): PaymentSuccessContext {
   return Object.freeze({
     ...(parameters.capturedRequest
@@ -1782,6 +1790,7 @@ function createPaymentSuccessContext(parameters: {
     method: snapshotMethod(parameters.method),
     receipt: snapshotValue(parameters.receipt),
     request: snapshotValue(parameters.request),
+    requestInput: snapshotValue(parameters.requestInput),
   }) as never
 }
 

@@ -242,7 +242,13 @@ export type CanOfferFn<method extends Method> = (parameters: {
 export type OnPaymentSuccessFn<method extends Method> = (parameters: {
   input?: globalThis.Request
   receipt: DeepReadonly<Receipt.Receipt>
+  /** Canonical payment request included in the challenge. */
   request: DeepReadonly<z.output<method['schema']['request']>>
+  /**
+   * Server-side request after defaults and request hooks, before the method
+   * request schema's output transforms.
+   */
+  requestInput: DeepReadonly<z.input<method['schema']['request']>>
 }) => MaybePromise<void>
 
 export type ComposableHooks<method extends Method> = {
