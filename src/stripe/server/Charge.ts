@@ -11,6 +11,7 @@ import * as Method from '../../Method.js'
 import type * as Html from '../../server/internal/html/config.ts'
 import type * as z from '../../zod.js'
 import { machinePaymentMetadata, stripePreviewVersion } from '../internal/constants.js'
+import type * as PaymentIntent from '../internal/payment-intent.js'
 import type {
   StripeClient,
   CreatePaymentMethodFromElements,
@@ -180,11 +181,22 @@ export function charge<const parameters extends charge.Parameters>(parameters: p
       const userMetadata = resolvedRequest.methodDetails?.metadata as
         | Record<string, string>
         | undefined
-      const resolvedMetadata = {
-        ...buildAnalytics({ credential }),
-        ...userMetadata,
-        ...paymentIntentOptions?.metadata,
-        ...machinePaymentMetadata,
+      const {
+        customer,
+        hooks,
+        metadata: optionMetadata,
+        receipt_email,
+      } = paymentIntentOptions ?? {}
+      const resolvedPaymentIntentOptions: ResolvedPaymentIntentOptions = {
+        ...(customer !== undefined && { customer }),
+        ...(hooks !== undefined && { hooks }),
+        metadata: {
+          ...buildAnalytics({ credential }),
+          ...machinePaymentMetadata,
+          ...userMetadata,
+          ...optionMetadata,
+        },
+        ...(receipt_email !== undefined && { receipt_email }),
       }
       const settlement = validateConnectSettlement({
         amount: resolvedRequest.amount,
@@ -193,22 +205,21 @@ export function charge<const parameters extends charge.Parameters>(parameters: p
             ? await connect({ challenge, credential, envelope, request: resolvedRequest })
             : connect,
       })
-
       const pi = client
         ? await createWithClient({
             client,
             challenge,
+            paymentIntentOptions: resolvedPaymentIntentOptions,
             request: resolvedRequest,
             spt,
-            metadata: resolvedMetadata,
             settlement,
           })
         : await createWithSecretKey({
             secretKey: secretKey!,
             challenge,
+            paymentIntentOptions: resolvedPaymentIntentOptions,
             request: resolvedRequest,
             spt,
-            metadata: resolvedMetadata,
             settlement,
           })
 
@@ -314,23 +325,31 @@ export declare namespace charge {
   }) => MaybePromise<ConnectSettlement | undefined>
 }
 
+type ResolvedPaymentIntentOptions = PaymentIntent.Options & {
+  metadata: Record<string, string>
+}
+
 /** Creates a PaymentIntent using the Stripe SDK client. */
 async function createWithClient(parameters: {
   client: StripeClient
   challenge: { id: string }
-  metadata: Record<string, string>
+  paymentIntentOptions: ResolvedPaymentIntentOptions
   request: { amount: unknown; currency: unknown }
   settlement: charge.ConnectSettlement | undefined
   spt: string
 }): Promise<{ id: string; status: string; replayed: boolean }> {
-  const { client, challenge, metadata, request, settlement, spt } = parameters
+  const { client, challenge, paymentIntentOptions, request, settlement, spt } = parameters
+  const { customer, hooks, metadata, receipt_email } = paymentIntentOptions
   try {
     const paymentIntentParams = {
       amount: Number(request.amount),
       automatic_payment_methods: { allow_redirects: 'never', enabled: true },
       confirm: true,
       currency: request.currency as string,
+      ...(customer !== undefined && { customer }),
+      ...(hooks !== undefined && { hooks }),
       metadata,
+      ...(receipt_email !== undefined && { receipt_email }),
       ...(settlement?.applicationFeeAmount !== undefined && {
         application_fee_amount: settlement.applicationFeeAmount,
       }),
@@ -347,15 +366,12 @@ async function createWithClient(parameters: {
       // `shared_payment_granted_token` is not yet in the Stripe SDK types (SPTs are in private preview).
       shared_payment_granted_token: spt,
     }
-    const paymentIntentOptions = {
+    const requestOptions = {
       apiVersion: stripePreviewVersion,
       idempotencyKey: `mpp_${challenge.id}_${spt}`,
       ...(settlement?.stripeAccount !== undefined && { stripeAccount: settlement.stripeAccount }),
     }
-    const result = await client.paymentIntents.create(
-      paymentIntentParams as any,
-      paymentIntentOptions,
-    )
+    const result = await client.paymentIntents.create(paymentIntentParams as any, requestOptions)
     // https://docs.stripe.com/error-low-level#idempotency
     const replayed = result.lastResponse?.headers?.['idempotent-replayed'] === 'true'
     return { id: result.id, status: result.status, replayed }
@@ -371,12 +387,13 @@ async function createWithClient(parameters: {
 async function createWithSecretKey(parameters: {
   secretKey: string
   challenge: { id: string }
-  metadata: Record<string, string>
+  paymentIntentOptions: ResolvedPaymentIntentOptions
   request: { amount: unknown; currency: unknown }
   settlement: charge.ConnectSettlement | undefined
   spt: string
 }): Promise<{ id: string; status: string; replayed: boolean }> {
-  const { secretKey, challenge, metadata, request, settlement, spt } = parameters
+  const { secretKey, challenge, paymentIntentOptions, request, settlement, spt } = parameters
+  const { customer, hooks, metadata, receipt_email } = paymentIntentOptions
 
   const body = new URLSearchParams({
     amount: request.amount as string,
@@ -384,11 +401,14 @@ async function createWithSecretKey(parameters: {
     'automatic_payment_methods[enabled]': 'true',
     confirm: 'true',
     currency: request.currency as string,
+    ...(customer !== undefined && { customer }),
+    ...(receipt_email !== undefined && { receipt_email }),
     shared_payment_granted_token: spt,
   })
   for (const [key, value] of Object.entries(metadata)) {
     body.set(`metadata[${key}]`, value)
   }
+  if (hooks !== undefined) body.set('hooks[inputs][tax][calculation]', hooks.inputs.tax.calculation)
   if (settlement?.applicationFeeAmount !== undefined)
     body.set('application_fee_amount', String(settlement.applicationFeeAmount))
   if (settlement?.onBehalfOf !== undefined) body.set('on_behalf_of', settlement.onBehalfOf)

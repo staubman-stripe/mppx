@@ -2,7 +2,16 @@ import * as z from '../../zod.js'
 
 /** Stripe PaymentIntent options accepted only by server-side method input. */
 export const Schema = z.object({
-  metadata: z.record(z.string(), z.string()),
+  customer: z.optional(z.string().check(z.minLength(1))),
+  hooks: z.optional(
+    z.object({
+      inputs: z.object({
+        tax: z.object({ calculation: z.string().check(z.minLength(1)) }),
+      }),
+    }),
+  ),
+  metadata: z.optional(z.record(z.string(), z.string())),
+  receipt_email: z.optional(z.string().check(z.minLength(1))),
 })
 
 export type Options = z.infer<typeof Schema>

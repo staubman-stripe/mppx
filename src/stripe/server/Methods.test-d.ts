@@ -16,7 +16,12 @@ test('async defaultMethods() produces types compose can use', async () => {
       {
         amount: '0.01',
         description: 'test',
-        paymentIntentOptions: { metadata: { key: 'value' } },
+        paymentIntentOptions: {
+          customer: 'cus_123',
+          hooks: { inputs: { tax: { calculation: 'taxcalc_123' } } },
+          metadata: { key: 'value' },
+          receipt_email: 'customer@example.com',
+        },
       },
     ],
     [
@@ -26,7 +31,7 @@ test('async defaultMethods() produces types compose can use', async () => {
         currency: 'usd',
         decimals: 2,
         description: 'test',
-        paymentIntentOptions: { metadata: { key: 'value' } },
+        paymentIntentOptions: { customer: 'cus_123' },
       },
     ],
   )(new Request('http://localhost'))

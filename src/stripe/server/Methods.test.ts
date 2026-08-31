@@ -71,12 +71,22 @@ describe('stripe.create() defaultMethods', () => {
     await tempoMethod.onPaymentSuccess!({
       receipt: { reference: '0xtx123' },
       request: { amount: '500000' },
-      requestInput: { paymentIntentOptions: { metadata: { request_id: 'req_123' } } },
+      requestInput: {
+        paymentIntentOptions: {
+          customer: 'cus_123',
+          hooks: { inputs: { tax: { calculation: 'taxcalc_123' } } },
+          metadata: { machine_payment: 'custom', request_id: 'req_123' },
+          receipt_email: 'customer@example.com',
+        },
+      },
     })
 
     expect(client.paymentIntents.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        metadata: { agent_id: 'test-agent', machine_payment: 'true', request_id: 'req_123' },
+        customer: 'cus_123',
+        hooks: { inputs: { tax: { calculation: 'taxcalc_123' } } },
+        metadata: { agent_id: 'test-agent', machine_payment: 'custom', request_id: 'req_123' },
+        receipt_email: 'customer@example.com',
       }),
       expect.anything(),
     )

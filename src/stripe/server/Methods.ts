@@ -187,6 +187,11 @@ class DefaultMethodsBuilder implements PromiseLike<DefaultMethods> {
  *   secretKey: mppSecretKey,
  * })
  * ```
+ *
+ * Caller-provided `paymentIntentOptions` are best-effort when recording completed
+ * crypto payments. If Stripe rejects those options, mppx retries the recording
+ * once without them so the on-chain payment can still be represented by a
+ * PaymentIntent. SPT payments do not use this fallback.
  */
 export function stripe<const P extends stripe.Parameters>(parameters: P): StripeMachinePayments<P> {
   const { client, networkId, livemode, connect, depositAddresses, metadata } = parameters
@@ -451,12 +456,16 @@ function createPaymentSuccessHandler(
         ...metadata,
         ...requestInput?.paymentIntentOptions?.metadata,
       }
+      const paymentIntentOptions = {
+        ...requestInput?.paymentIntentOptions,
+        ...(Object.keys(resolvedMetadata).length > 0 && { metadata: resolvedMetadata }),
+      }
       return recordCryptoPayment(client, {
         network,
         reference: receipt.reference,
         amount: String(request.amount),
         ...(connect && { connect }),
-        ...(Object.keys(resolvedMetadata).length > 0 && { metadata: resolvedMetadata }),
+        ...(Object.keys(paymentIntentOptions).length > 0 && { paymentIntentOptions }),
       })
     }
   }
