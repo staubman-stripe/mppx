@@ -21,10 +21,11 @@ export function recordCryptoPayment(
     reference: string
     amount: string
     connect?: ConnectConfig
+    customer?: string
     metadata?: Record<string, string>
   },
 ): Promise<void> {
-  const { network, reference, amount, connect, metadata } = parameters
+  const { network, reference, amount, connect, customer, metadata } = parameters
   const { stripeNetworkName, tokenDecimals } = NETWORK_CONFIG[network]
 
   const amountCents = Math.round(Number(amount) / 10 ** (tokenDecimals - 2))
@@ -41,6 +42,7 @@ export function recordCryptoPayment(
       amount: amountCents,
       currency: 'usd',
       confirm: true,
+      ...(customer && { customer }),
       payment_method_data: { type: 'crypto' },
       payment_method_types: ['crypto'],
       payment_method_options: {
@@ -52,7 +54,7 @@ export function recordCryptoPayment(
           },
         },
       },
-      metadata: { ...metadata, ...machinePaymentMetadata },
+      metadata: { ...machinePaymentMetadata, ...metadata },
     },
     {
       idempotencyKey: reference,

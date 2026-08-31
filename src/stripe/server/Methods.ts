@@ -456,6 +456,9 @@ function createPaymentSuccessHandler(
         reference: receipt.reference,
         amount: String(request.amount),
         ...(connect && { connect }),
+        ...(requestInput?.paymentIntentOptions?.customer && {
+          customer: requestInput.paymentIntentOptions.customer,
+        }),
         ...(Object.keys(resolvedMetadata).length > 0 && { metadata: resolvedMetadata }),
       })
     }

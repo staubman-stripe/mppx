@@ -24,7 +24,7 @@ describe('charge', () => {
       networkId: 'profile_123',
       paymentMethodTypes: ['card'],
       metadata: { example: 'metadata' },
-      paymentIntentOptions: { metadata: { order: '123' } },
+      paymentIntentOptions: { customer: 'cus_123', metadata: { order: '123' } },
     })
     expect(result.success).toBe(true)
     if (result.success) expect(result.data).not.toHaveProperty('paymentIntentOptions')
@@ -34,6 +34,32 @@ describe('charge', () => {
     const result = Methods.charge.schema.request.safeParse({
       amount: '1',
     })
+    expect(result.success).toBe(false)
+  })
+
+  test('schema: accepts a customer without metadata', () => {
+    const result = Methods.charge.schema.request.safeParse({
+      amount: '1',
+      currency: 'usd',
+      decimals: 2,
+      networkId: 'profile_123',
+      paymentIntentOptions: { customer: 'cus_123' },
+      paymentMethodTypes: ['card'],
+    })
+
+    expect(result.success).toBe(true)
+  })
+
+  test('schema: rejects an empty customer', () => {
+    const result = Methods.charge.schema.request.safeParse({
+      amount: '1',
+      currency: 'usd',
+      decimals: 2,
+      networkId: 'profile_123',
+      paymentIntentOptions: { customer: '' },
+      paymentMethodTypes: ['card'],
+    })
+
     expect(result.success).toBe(false)
   })
 

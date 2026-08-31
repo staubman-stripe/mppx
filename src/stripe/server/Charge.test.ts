@@ -192,7 +192,15 @@ describe('stripe.charge with client', () => {
           amount: '1',
           currency: 'usd',
           decimals: 2,
-          paymentIntentOptions: { metadata: { plan: 'enterprise', request_id: 'req_123' } },
+          paymentIntentOptions: {
+            customer: 'cus_123',
+            metadata: {
+              machine_payment: 'custom',
+              mpp_challenge_id: 'custom',
+              plan: 'enterprise',
+              request_id: 'req_123',
+            },
+          },
         }),
       )(req, res)
       if (result.status === 402) return
@@ -212,8 +220,13 @@ describe('stripe.charge with client', () => {
     })
 
     const [params] = create.mock.calls[0]!
-    expect(params.metadata).toMatchObject({ plan: 'enterprise', request_id: 'req_123' })
-    expect(params.metadata).toHaveProperty('machine_payment', 'true')
+    expect(params.customer).toBe('cus_123')
+    expect(params.metadata).toMatchObject({
+      machine_payment: 'custom',
+      mpp_challenge_id: 'custom',
+      plan: 'enterprise',
+      request_id: 'req_123',
+    })
     expect(params.metadata).not.toHaveProperty('mpp_is_mpp')
     expect(params.metadata).not.toHaveProperty('mpp_version')
   })

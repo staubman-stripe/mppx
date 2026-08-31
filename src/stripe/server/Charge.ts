@@ -182,9 +182,9 @@ export function charge<const parameters extends charge.Parameters>(parameters: p
         | undefined
       const resolvedMetadata = {
         ...buildAnalytics({ credential }),
+        ...machinePaymentMetadata,
         ...userMetadata,
         ...paymentIntentOptions?.metadata,
-        ...machinePaymentMetadata,
       }
       const settlement = validateConnectSettlement({
         amount: resolvedRequest.amount,
@@ -193,11 +193,13 @@ export function charge<const parameters extends charge.Parameters>(parameters: p
             ? await connect({ challenge, credential, envelope, request: resolvedRequest })
             : connect,
       })
+      const customer = paymentIntentOptions?.customer
 
       const pi = client
         ? await createWithClient({
             client,
             challenge,
+            customer,
             request: resolvedRequest,
             spt,
             metadata: resolvedMetadata,
@@ -206,6 +208,7 @@ export function charge<const parameters extends charge.Parameters>(parameters: p
         : await createWithSecretKey({
             secretKey: secretKey!,
             challenge,
+            customer,
             request: resolvedRequest,
             spt,
             metadata: resolvedMetadata,
@@ -318,18 +321,20 @@ export declare namespace charge {
 async function createWithClient(parameters: {
   client: StripeClient
   challenge: { id: string }
+  customer?: string | undefined
   metadata: Record<string, string>
   request: { amount: unknown; currency: unknown }
   settlement: charge.ConnectSettlement | undefined
   spt: string
 }): Promise<{ id: string; status: string; replayed: boolean }> {
-  const { client, challenge, metadata, request, settlement, spt } = parameters
+  const { client, challenge, customer, metadata, request, settlement, spt } = parameters
   try {
     const paymentIntentParams = {
       amount: Number(request.amount),
       automatic_payment_methods: { allow_redirects: 'never', enabled: true },
       confirm: true,
       currency: request.currency as string,
+      ...(customer !== undefined && { customer }),
       metadata,
       ...(settlement?.applicationFeeAmount !== undefined && {
         application_fee_amount: settlement.applicationFeeAmount,
@@ -371,12 +376,13 @@ async function createWithClient(parameters: {
 async function createWithSecretKey(parameters: {
   secretKey: string
   challenge: { id: string }
+  customer?: string | undefined
   metadata: Record<string, string>
   request: { amount: unknown; currency: unknown }
   settlement: charge.ConnectSettlement | undefined
   spt: string
 }): Promise<{ id: string; status: string; replayed: boolean }> {
-  const { secretKey, challenge, metadata, request, settlement, spt } = parameters
+  const { secretKey, challenge, customer, metadata, request, settlement, spt } = parameters
 
   const body = new URLSearchParams({
     amount: request.amount as string,
@@ -384,6 +390,7 @@ async function createWithSecretKey(parameters: {
     'automatic_payment_methods[enabled]': 'true',
     confirm: 'true',
     currency: request.currency as string,
+    ...(customer !== undefined && { customer }),
     shared_payment_granted_token: spt,
   })
   for (const [key, value] of Object.entries(metadata)) {

@@ -16,7 +16,7 @@ test('async defaultMethods() produces types compose can use', async () => {
       {
         amount: '0.01',
         description: 'test',
-        paymentIntentOptions: { metadata: { key: 'value' } },
+        paymentIntentOptions: { customer: 'cus_123', metadata: { key: 'value' } },
       },
     ],
     [
@@ -26,7 +26,7 @@ test('async defaultMethods() produces types compose can use', async () => {
         currency: 'usd',
         decimals: 2,
         description: 'test',
-        paymentIntentOptions: { metadata: { key: 'value' } },
+        paymentIntentOptions: { customer: 'cus_123' },
       },
     ],
   )(new Request('http://localhost'))
