@@ -194,12 +194,14 @@ describe('stripe.charge with client', () => {
           decimals: 2,
           paymentIntentOptions: {
             customer: 'cus_123',
+            hooks: { inputs: { tax: { calculation: 'taxcalc_123' } } },
             metadata: {
               machine_payment: 'custom',
               mpp_challenge_id: 'custom',
               plan: 'enterprise',
               request_id: 'req_123',
             },
+            receipt_email: 'customer@example.com',
           },
         }),
       )(req, res)
@@ -221,6 +223,7 @@ describe('stripe.charge with client', () => {
 
     const [params] = create.mock.calls[0]!
     expect(params.customer).toBe('cus_123')
+    expect(params.hooks).toEqual({ inputs: { tax: { calculation: 'taxcalc_123' } } })
     expect(params.metadata).toMatchObject({
       machine_payment: 'custom',
       mpp_challenge_id: 'custom',
@@ -229,6 +232,7 @@ describe('stripe.charge with client', () => {
     })
     expect(params.metadata).not.toHaveProperty('mpp_is_mpp')
     expect(params.metadata).not.toHaveProperty('mpp_version')
+    expect(params.receipt_email).toBe('customer@example.com')
   })
 
   test('behavior: applies Connect settlement parameters in client call', async () => {
@@ -314,7 +318,16 @@ describe('stripe.charge with client', () => {
       secretKey,
     })
 
-    const handle = server.charge({ amount: '1', currency: 'usd', decimals: 2 })
+    const handle = server.charge({
+      amount: '1',
+      currency: 'usd',
+      decimals: 2,
+      paymentIntentOptions: {
+        customer: 'cus_123',
+        hooks: { inputs: { tax: { calculation: 'taxcalc_123' } } },
+        receipt_email: 'customer@example.com',
+      },
+    })
     const firstResult = await handle(new Request('https://example.com'))
     expect(firstResult.status).toBe(402)
     if (firstResult.status !== 402) throw new Error()
@@ -342,6 +355,9 @@ describe('stripe.charge with client', () => {
     expect(body.get('transfer_data[amount]')).toBe('88')
     expect(body.get('transfer_data[destination]')).toBe('acct_destination')
     expect(body.get('transfer_group')).toBe('order_123')
+    expect(body.get('customer')).toBe('cus_123')
+    expect(body.get('hooks[inputs][tax][calculation]')).toBe('taxcalc_123')
+    expect(body.get('receipt_email')).toBe('customer@example.com')
   })
 
   test('security: attributes receipt externalId from the server-bound request', async () => {

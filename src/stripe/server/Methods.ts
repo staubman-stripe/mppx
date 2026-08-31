@@ -456,15 +456,16 @@ function createPaymentSuccessHandler(
         ...metadata,
         ...requestInput?.paymentIntentOptions?.metadata,
       }
+      const paymentIntentOptions = {
+        ...requestInput?.paymentIntentOptions,
+        ...(Object.keys(resolvedMetadata).length > 0 && { metadata: resolvedMetadata }),
+      }
       return recordCryptoPayment(client, {
         network,
         reference: receipt.reference,
         amount: String(request.amount),
         ...(connect && { connect }),
-        ...(requestInput?.paymentIntentOptions?.customer && {
-          customer: requestInput.paymentIntentOptions.customer,
-        }),
-        ...(Object.keys(resolvedMetadata).length > 0 && { metadata: resolvedMetadata }),
+        ...(Object.keys(paymentIntentOptions).length > 0 && { paymentIntentOptions }),
       })
     }
   }

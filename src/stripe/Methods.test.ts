@@ -24,7 +24,12 @@ describe('charge', () => {
       networkId: 'profile_123',
       paymentMethodTypes: ['card'],
       metadata: { example: 'metadata' },
-      paymentIntentOptions: { customer: 'cus_123', metadata: { order: '123' } },
+      paymentIntentOptions: {
+        customer: 'cus_123',
+        hooks: { inputs: { tax: { calculation: 'taxcalc_123' } } },
+        metadata: { order: '123' },
+        receipt_email: 'customer@example.com',
+      },
     })
     expect(result.success).toBe(true)
     if (result.success) expect(result.data).not.toHaveProperty('paymentIntentOptions')

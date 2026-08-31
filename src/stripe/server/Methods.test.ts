@@ -74,7 +74,9 @@ describe('stripe.create() defaultMethods', () => {
       requestInput: {
         paymentIntentOptions: {
           customer: 'cus_123',
+          hooks: { inputs: { tax: { calculation: 'taxcalc_123' } } },
           metadata: { machine_payment: 'custom', request_id: 'req_123' },
+          receipt_email: 'customer@example.com',
         },
       },
     })
@@ -82,7 +84,9 @@ describe('stripe.create() defaultMethods', () => {
     expect(client.paymentIntents.create).toHaveBeenCalledWith(
       expect.objectContaining({
         customer: 'cus_123',
+        hooks: { inputs: { tax: { calculation: 'taxcalc_123' } } },
         metadata: { agent_id: 'test-agent', machine_payment: 'custom', request_id: 'req_123' },
+        receipt_email: 'customer@example.com',
       }),
       expect.anything(),
     )

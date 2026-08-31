@@ -20,9 +20,13 @@ describe('recordCryptoPayment', () => {
 
     await recordCryptoPayment(createClient(create), {
       amount: '500000',
-      customer: 'cus_123',
-      metadata: { machine_payment: 'custom', request_id: 'req_123' },
       network: 'tempo',
+      paymentIntentOptions: {
+        customer: 'cus_123',
+        hooks: { inputs: { tax: { calculation: 'taxcalc_123' } } },
+        metadata: { machine_payment: 'custom', request_id: 'req_123' },
+        receipt_email: 'customer@example.com',
+      },
       reference: '0xtx123',
     })
 
@@ -30,10 +34,14 @@ describe('recordCryptoPayment', () => {
     expect(create.mock.calls[0]?.[0]).toEqual(
       expect.objectContaining({
         customer: 'cus_123',
+        hooks: { inputs: { tax: { calculation: 'taxcalc_123' } } },
         metadata: { machine_payment: 'custom', request_id: 'req_123' },
+        receipt_email: 'customer@example.com',
       }),
     )
     expect(create.mock.calls[1]?.[0]).not.toHaveProperty('customer')
+    expect(create.mock.calls[1]?.[0]).not.toHaveProperty('hooks')
+    expect(create.mock.calls[1]?.[0]).not.toHaveProperty('receipt_email')
     expect(create.mock.calls[1]?.[0]).toEqual(
       expect.objectContaining({ metadata: { machine_payment: 'true' } }),
     )
@@ -50,8 +58,8 @@ describe('recordCryptoPayment', () => {
 
     await recordCryptoPayment(createClient(create), {
       amount: '500000',
-      customer: 'cus_123',
       network: 'tempo',
+      paymentIntentOptions: { customer: 'cus_123' },
       reference: '0xtx123',
     })
 
