@@ -181,11 +181,22 @@ export function charge<const parameters extends charge.Parameters>(parameters: p
       const userMetadata = resolvedRequest.methodDetails?.metadata as
         | Record<string, string>
         | undefined
-      const resolvedMetadata = {
-        ...buildAnalytics({ credential }),
-        ...machinePaymentMetadata,
-        ...userMetadata,
-        ...paymentIntentOptions?.metadata,
+      const {
+        customer,
+        hooks,
+        metadata: optionMetadata,
+        receipt_email,
+      } = paymentIntentOptions ?? {}
+      const resolvedPaymentIntentOptions: ResolvedPaymentIntentOptions = {
+        ...(customer !== undefined && { customer }),
+        ...(hooks !== undefined && { hooks }),
+        metadata: {
+          ...buildAnalytics({ credential }),
+          ...machinePaymentMetadata,
+          ...userMetadata,
+          ...optionMetadata,
+        },
+        ...(receipt_email !== undefined && { receipt_email }),
       }
       const settlement = validateConnectSettlement({
         amount: resolvedRequest.amount,
@@ -198,19 +209,17 @@ export function charge<const parameters extends charge.Parameters>(parameters: p
         ? await createWithClient({
             client,
             challenge,
-            paymentIntentOptions,
+            paymentIntentOptions: resolvedPaymentIntentOptions,
             request: resolvedRequest,
             spt,
-            metadata: resolvedMetadata,
             settlement,
           })
         : await createWithSecretKey({
             secretKey: secretKey!,
             challenge,
-            paymentIntentOptions,
+            paymentIntentOptions: resolvedPaymentIntentOptions,
             request: resolvedRequest,
             spt,
-            metadata: resolvedMetadata,
             settlement,
           })
 
@@ -316,18 +325,21 @@ export declare namespace charge {
   }) => MaybePromise<ConnectSettlement | undefined>
 }
 
+type ResolvedPaymentIntentOptions = PaymentIntent.Options & {
+  metadata: Record<string, string>
+}
+
 /** Creates a PaymentIntent using the Stripe SDK client. */
 async function createWithClient(parameters: {
   client: StripeClient
   challenge: { id: string }
-  metadata: Record<string, string>
-  paymentIntentOptions?: PaymentIntent.Options | undefined
+  paymentIntentOptions: ResolvedPaymentIntentOptions
   request: { amount: unknown; currency: unknown }
   settlement: charge.ConnectSettlement | undefined
   spt: string
 }): Promise<{ id: string; status: string; replayed: boolean }> {
-  const { client, challenge, metadata, paymentIntentOptions, request, settlement, spt } = parameters
-  const { customer, hooks, receipt_email } = paymentIntentOptions ?? {}
+  const { client, challenge, paymentIntentOptions, request, settlement, spt } = parameters
+  const { customer, hooks, metadata, receipt_email } = paymentIntentOptions
   try {
     const paymentIntentParams = {
       amount: Number(request.amount),
@@ -375,15 +387,13 @@ async function createWithClient(parameters: {
 async function createWithSecretKey(parameters: {
   secretKey: string
   challenge: { id: string }
-  metadata: Record<string, string>
-  paymentIntentOptions?: PaymentIntent.Options | undefined
+  paymentIntentOptions: ResolvedPaymentIntentOptions
   request: { amount: unknown; currency: unknown }
   settlement: charge.ConnectSettlement | undefined
   spt: string
 }): Promise<{ id: string; status: string; replayed: boolean }> {
-  const { secretKey, challenge, metadata, paymentIntentOptions, request, settlement, spt } =
-    parameters
-  const { customer, hooks, receipt_email } = paymentIntentOptions ?? {}
+  const { secretKey, challenge, paymentIntentOptions, request, settlement, spt } = parameters
+  const { customer, hooks, metadata, receipt_email } = paymentIntentOptions
 
   const body = new URLSearchParams({
     amount: request.amount as string,
