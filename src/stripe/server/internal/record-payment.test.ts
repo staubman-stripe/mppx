@@ -22,18 +22,24 @@ describe('recordCryptoPayment', () => {
       amount: '500000',
       network: 'tempo',
       paymentIntentOptions: {
+        amount: 999,
+        confirm: false,
         customer: 'cus_123',
+        currency: 'eur',
         hooks: { inputs: { tax: { calculation: 'taxcalc_123' } } },
         metadata: { machine_payment: 'custom', request_id: 'req_123' },
         receipt_email: 'customer@example.com',
-      },
+      } as any,
       reference: '0xtx123',
     })
 
     expect(create).toHaveBeenCalledTimes(2)
     expect(create.mock.calls[0]?.[0]).toEqual(
       expect.objectContaining({
+        amount: 50,
+        confirm: true,
         customer: 'cus_123',
+        currency: 'usd',
         hooks: { inputs: { tax: { calculation: 'taxcalc_123' } } },
         metadata: { machine_payment: 'custom', request_id: 'req_123' },
         receipt_email: 'customer@example.com',

@@ -27,7 +27,7 @@ export function recordCryptoPayment(
   },
 ): Promise<void> {
   const { network, reference, amount, connect, paymentIntentOptions } = parameters
-  const { metadata, ...additionalParams } = paymentIntentOptions ?? {}
+  const { customer, hooks, metadata, receipt_email } = paymentIntentOptions ?? {}
   const { stripeNetworkName, tokenDecimals } = NETWORK_CONFIG[network]
 
   const amountCents = Math.round(Number(amount) / 10 ** (tokenDecimals - 2))
@@ -64,8 +64,10 @@ export function recordCryptoPayment(
     client,
     {
       ...requiredParams,
-      ...additionalParams,
+      ...(customer !== undefined && { customer }),
+      ...(hooks !== undefined && { hooks }),
       metadata: { ...machinePaymentMetadata, ...metadata },
+      ...(receipt_email !== undefined && { receipt_email }),
     },
     options,
   )

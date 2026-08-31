@@ -193,7 +193,10 @@ describe('stripe.charge with client', () => {
           currency: 'usd',
           decimals: 2,
           paymentIntentOptions: {
+            amount: 999,
+            confirm: false,
             customer: 'cus_123',
+            currency: 'eur',
             hooks: { inputs: { tax: { calculation: 'taxcalc_123' } } },
             metadata: {
               machine_payment: 'custom',
@@ -202,7 +205,7 @@ describe('stripe.charge with client', () => {
               request_id: 'req_123',
             },
             receipt_email: 'customer@example.com',
-          },
+          } as any,
         }),
       )(req, res)
       if (result.status === 402) return
@@ -222,7 +225,10 @@ describe('stripe.charge with client', () => {
     })
 
     const [params] = create.mock.calls[0]!
+    expect(params.amount).toBe(100)
+    expect(params.confirm).toBe(true)
     expect(params.customer).toBe('cus_123')
+    expect(params.currency).toBe('usd')
     expect(params.hooks).toEqual({ inputs: { tax: { calculation: 'taxcalc_123' } } })
     expect(params.metadata).toMatchObject({
       machine_payment: 'custom',

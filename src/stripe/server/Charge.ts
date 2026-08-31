@@ -327,15 +327,17 @@ async function createWithClient(parameters: {
   spt: string
 }): Promise<{ id: string; status: string; replayed: boolean }> {
   const { client, challenge, metadata, paymentIntentOptions, request, settlement, spt } = parameters
-  const { metadata: _, ...additionalParams } = paymentIntentOptions ?? {}
+  const { customer, hooks, receipt_email } = paymentIntentOptions ?? {}
   try {
     const paymentIntentParams = {
       amount: Number(request.amount),
       automatic_payment_methods: { allow_redirects: 'never', enabled: true },
       confirm: true,
       currency: request.currency as string,
-      ...additionalParams,
+      ...(customer !== undefined && { customer }),
+      ...(hooks !== undefined && { hooks }),
       metadata,
+      ...(receipt_email !== undefined && { receipt_email }),
       ...(settlement?.applicationFeeAmount !== undefined && {
         application_fee_amount: settlement.applicationFeeAmount,
       }),
