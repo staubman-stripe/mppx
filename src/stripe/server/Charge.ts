@@ -381,7 +381,7 @@ async function createWithSecretKey(parameters: {
 }): Promise<{ id: string; status: string; replayed: boolean }> {
   const { secretKey, challenge, metadata, paymentIntentOptions, request, settlement, spt } =
     parameters
-  const { customer, hooks, receipt_email: receiptEmail } = paymentIntentOptions ?? {}
+  const { customer, hooks, receipt_email } = paymentIntentOptions ?? {}
 
   const body = new URLSearchParams({
     amount: request.amount as string,
@@ -390,12 +390,12 @@ async function createWithSecretKey(parameters: {
     confirm: 'true',
     currency: request.currency as string,
     ...(customer !== undefined && { customer }),
+    ...(receipt_email !== undefined && { receipt_email }),
     shared_payment_granted_token: spt,
   })
   for (const [key, value] of Object.entries(metadata)) {
     body.set(`metadata[${key}]`, value)
   }
-  if (receiptEmail !== undefined) body.set('receipt_email', receiptEmail)
   if (hooks !== undefined) body.set('hooks[inputs][tax][calculation]', hooks.inputs.tax.calculation)
   if (settlement?.applicationFeeAmount !== undefined)
     body.set('application_fee_amount', String(settlement.applicationFeeAmount))

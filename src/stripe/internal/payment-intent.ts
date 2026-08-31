@@ -6,12 +6,12 @@ export const Schema = z.object({
   hooks: z.optional(
     z.object({
       inputs: z.object({
-        tax: z.object({ calculation: z.string() }),
+        tax: z.object({ calculation: z.string().check(z.minLength(1)) }),
       }),
     }),
   ),
   metadata: z.optional(z.record(z.string(), z.string())),
-  receipt_email: z.optional(z.string()),
+  receipt_email: z.optional(z.string().check(z.minLength(1))),
 })
 
 export type Options = z.infer<typeof Schema>

@@ -60,7 +60,7 @@ export function recordCryptoPayment(
     ...(connect && { connect }),
   }
   const hasOptionalParams = paymentIntentOptions !== undefined
-  const recording = createPaymentIntent(
+  return createPaymentIntent(
     client,
     {
       ...requiredParams,
@@ -68,21 +68,21 @@ export function recordCryptoPayment(
       metadata: { ...machinePaymentMetadata, ...metadata },
     },
     options,
-  ).catch((error: unknown) => {
-    if (!hasOptionalParams || !isDefinitiveInvalidRequestError(error)) throw error
-    console.warn(
-      '[stripe] optional PI recording fields were rejected; retrying without them:',
-      error,
-    )
-    return createPaymentIntent(client, requiredParams, options)
-  })
-
-  return recording.then(
-    () => {},
-    (err) => {
-      console.error('[stripe] failed to record crypto payment:', err)
-    },
   )
+    .catch((error: unknown) => {
+      if (!hasOptionalParams || !isDefinitiveInvalidRequestError(error)) throw error
+      console.warn(
+        '[stripe] optional PI recording fields were rejected; retrying without them:',
+        error,
+      )
+      return createPaymentIntent(client, requiredParams, options)
+    })
+    .then(
+      () => {},
+      (err) => {
+        console.error('[stripe] failed to record crypto payment:', err)
+      },
+    )
 }
 
 /** Returns whether Stripe definitively rejected request parameters before creating a PI. */

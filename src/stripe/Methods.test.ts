@@ -68,6 +68,22 @@ describe('charge', () => {
     expect(result.success).toBe(false)
   })
 
+  test.each([{ hooks: { inputs: { tax: { calculation: '' } } } }, { receipt_email: '' }])(
+    'schema: rejects empty PaymentIntent option strings',
+    (paymentIntentOptions) => {
+      const result = Methods.charge.schema.request.safeParse({
+        amount: '1',
+        currency: 'usd',
+        decimals: 2,
+        networkId: 'profile_123',
+        paymentIntentOptions,
+        paymentMethodTypes: ['card'],
+      })
+
+      expect(result.success).toBe(false)
+    },
+  )
+
   test('schema: requires decimals when no server default supplies it', () => {
     const result = Methods.charge.schema.request.safeParse({
       amount: '1',
