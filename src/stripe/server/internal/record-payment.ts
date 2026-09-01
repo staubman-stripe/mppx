@@ -19,6 +19,7 @@ const NETWORK_CONFIG: Record<stripe.Network, { stripeNetworkName: string; tokenD
 export function recordCryptoPayment(
   client: StripeClient,
   parameters: {
+    analyticsMetadata?: Record<string, string> | undefined
     network: stripe.Network
     reference: string
     amount: string
@@ -26,7 +27,8 @@ export function recordCryptoPayment(
     paymentIntentOptions?: PaymentIntent.Options | undefined
   },
 ): Promise<void> {
-  const { network, reference, amount, connect, paymentIntentOptions } = parameters
+  const { analyticsMetadata, network, reference, amount, connect, paymentIntentOptions } =
+    parameters
   const { customer, hooks, metadata, receipt_email } = paymentIntentOptions ?? {}
   const { stripeNetworkName, tokenDecimals } = NETWORK_CONFIG[network]
 
@@ -53,7 +55,7 @@ export function recordCryptoPayment(
         },
       },
     },
-    metadata: machinePaymentMetadata,
+    metadata: { ...analyticsMetadata, ...machinePaymentMetadata },
   }
   const options = {
     idempotencyKey: reference,
@@ -66,7 +68,7 @@ export function recordCryptoPayment(
       ...requiredParams,
       ...(customer !== undefined && { customer }),
       ...(hooks !== undefined && { hooks }),
-      metadata: { ...machinePaymentMetadata, ...metadata },
+      metadata: { ...analyticsMetadata, ...machinePaymentMetadata, ...metadata },
       ...(receipt_email !== undefined && { receipt_email }),
     },
     options,

@@ -76,6 +76,12 @@ describe('stripe.create() defaultMethods', () => {
     const tempoMethod = findMethod(methods, 'tempo', 'charge')
 
     await tempoMethod.onPaymentSuccess!({
+      challenge: {
+        id: 'challenge_123',
+        intent: 'charge',
+        realm: 'api.example.com',
+      } as any,
+      credential: { source: 'did:example:client' } as any,
       receipt: { reference: '0xtx123' },
       request: { amount: '500000' },
       requestInput: {
@@ -92,7 +98,15 @@ describe('stripe.create() defaultMethods', () => {
       expect.objectContaining({
         customer: 'cus_123',
         hooks: { inputs: { tax: { calculation: 'taxcalc_123' } } },
-        metadata: { agent_id: 'test-agent', machine_payment: 'custom', request_id: 'req_123' },
+        metadata: {
+          agent_id: 'test-agent',
+          machine_payment: 'custom',
+          mpp_challenge_id: 'challenge_123',
+          mpp_client_id: 'did:example:client',
+          mpp_intent: 'charge',
+          mpp_server_id: 'api.example.com',
+          request_id: 'req_123',
+        },
         receipt_email: 'customer@example.com',
       }),
       expect.anything(),

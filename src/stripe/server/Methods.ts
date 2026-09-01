@@ -8,6 +8,7 @@ import * as z from '../../zod.js'
 import * as PaymentIntent from '../internal/payment-intent.js'
 import type { StripeClient } from '../internal/types.js'
 import { charge as charge_ } from './Charge.js'
+import { buildAnalytics } from './internal/analytics.js'
 import { findOrCreateDepositAddress as _findOrCreateDepositAddress } from './internal/deposit-address.js'
 import * as HostedFeePayer from './internal/hosted-fee-payer.js'
 import { recordCryptoPayment } from './internal/record-payment.js'
@@ -459,8 +460,14 @@ function createPaymentSuccessHandler(
   connect?: ConnectConfig,
   metadata?: Record<string, string>,
 ) {
-  return (params: { receipt: any; request: any; requestInput?: any }) => {
-    const { receipt, request, requestInput } = params
+  return (params: {
+    challenge?: any
+    credential?: any
+    receipt: any
+    request: any
+    requestInput?: any
+  }) => {
+    const { challenge, credential, receipt, request, requestInput } = params
     if (receipt?.reference && request?.amount) {
       const resolvedMetadata = {
         ...metadata,
@@ -474,6 +481,7 @@ function createPaymentSuccessHandler(
         network,
         reference: receipt.reference,
         amount: String(request.amount),
+        ...(challenge && { analyticsMetadata: buildAnalytics({ challenge, credential }) }),
         ...(connect && { connect }),
         ...(Object.keys(paymentIntentOptions).length > 0 && { paymentIntentOptions }),
       })

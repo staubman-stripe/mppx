@@ -19,6 +19,11 @@ describe('recordCryptoPayment', () => {
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
     await recordCryptoPayment(createClient(create), {
+      analyticsMetadata: {
+        mpp_challenge_id: 'challenge_123',
+        mpp_intent: 'charge',
+        mpp_server_id: 'api.example.com',
+      },
       amount: '500000',
       network: 'tempo',
       paymentIntentOptions: {
@@ -41,7 +46,13 @@ describe('recordCryptoPayment', () => {
         customer: 'cus_123',
         currency: 'usd',
         hooks: { inputs: { tax: { calculation: 'taxcalc_123' } } },
-        metadata: { machine_payment: 'custom', request_id: 'req_123' },
+        metadata: {
+          machine_payment: 'custom',
+          mpp_challenge_id: 'challenge_123',
+          mpp_intent: 'charge',
+          mpp_server_id: 'api.example.com',
+          request_id: 'req_123',
+        },
         receipt_email: 'customer@example.com',
       }),
     )
@@ -49,7 +60,14 @@ describe('recordCryptoPayment', () => {
     expect(create.mock.calls[1]?.[0]).not.toHaveProperty('hooks')
     expect(create.mock.calls[1]?.[0]).not.toHaveProperty('receipt_email')
     expect(create.mock.calls[1]?.[0]).toEqual(
-      expect.objectContaining({ metadata: { machine_payment: 'true' } }),
+      expect.objectContaining({
+        metadata: {
+          machine_payment: 'true',
+          mpp_challenge_id: 'challenge_123',
+          mpp_intent: 'charge',
+          mpp_server_id: 'api.example.com',
+        },
+      }),
     )
     expect(create.mock.calls[1]?.[1]).toEqual(create.mock.calls[0]?.[1])
     expect(warning).toHaveBeenCalledWith(
