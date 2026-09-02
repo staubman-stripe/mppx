@@ -1,4 +1,3 @@
-import { machinePaymentMetadata } from '../../internal/constants.js'
 import type * as PaymentIntent from '../../internal/payment-intent.js'
 import type { StripeClient } from '../../internal/types.js'
 import type { stripe } from '../Methods.js'
@@ -23,10 +22,12 @@ export function recordCryptoPayment(
     reference: string
     amount: string
     connect?: ConnectConfig
+    analyticsMetadata: Record<string, string>
     paymentIntentOptions?: PaymentIntent.Options | undefined
   },
 ): Promise<void> {
-  const { network, reference, amount, connect, paymentIntentOptions } = parameters
+  const { network, reference, amount, connect, analyticsMetadata, paymentIntentOptions } =
+    parameters
   const { customer, hooks, metadata, receipt_email } = paymentIntentOptions ?? {}
   const { stripeNetworkName, tokenDecimals } = NETWORK_CONFIG[network]
 
@@ -53,7 +54,7 @@ export function recordCryptoPayment(
         },
       },
     },
-    metadata: machinePaymentMetadata,
+    metadata: analyticsMetadata,
   }
   const options = {
     idempotencyKey: reference,
@@ -66,7 +67,7 @@ export function recordCryptoPayment(
       ...requiredParams,
       ...(customer !== undefined && { customer }),
       ...(hooks !== undefined && { hooks }),
-      metadata: { ...machinePaymentMetadata, ...metadata },
+      metadata: { ...analyticsMetadata, ...metadata },
       ...(receipt_email !== undefined && { receipt_email }),
     },
     options,

@@ -1597,8 +1597,8 @@ describe('server events', () => {
   test('per-method onPaymentSuccess hook fires on successful payment', async () => {
     const calls: string[] = []
     const serverMethod = Method.toServer(eventCharge, {
-      onPaymentSuccess: async ({ receipt }) => {
-        calls.push(receipt.reference)
+      onPaymentSuccess: async ({ challenge, receipt }) => {
+        calls.push(`${receipt.reference}:${challenge?.id}`)
       },
       async verify() {
         return receipt('tx-hook')
@@ -1616,7 +1616,8 @@ describe('server events', () => {
       { request: options() },
     )
 
-    expect(calls).toEqual(['tx-hook'])
+    const parsedChallenge = Challenge.fromResponse(challenge.challenge)
+    expect(calls).toEqual([`tx-hook:${parsedChallenge.id}`])
   })
 
   test('onPaymentSuccess does not fire for a different method name', async () => {

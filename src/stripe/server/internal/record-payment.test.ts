@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from 'vp/test'
 
+import { sdkIdentifier } from '../../../internal/version.js'
 import type { StripeClient } from '../../internal/types.js'
 import { recordCryptoPayment } from './record-payment.js'
 
@@ -21,6 +22,12 @@ describe('recordCryptoPayment', () => {
     await recordCryptoPayment(createClient(create), {
       amount: '500000',
       network: 'tempo',
+      analyticsMetadata: {
+        machine_payment: 'true',
+        mpp_challenge_id: 'challenge_123',
+        mpp_intent: 'charge',
+        mpp_sdk: sdkIdentifier,
+      },
       paymentIntentOptions: {
         amount: 999,
         confirm: false,
@@ -41,7 +48,13 @@ describe('recordCryptoPayment', () => {
         customer: 'cus_123',
         currency: 'usd',
         hooks: { inputs: { tax: { calculation: 'taxcalc_123' } } },
-        metadata: { machine_payment: 'custom', request_id: 'req_123' },
+        metadata: {
+          machine_payment: 'custom',
+          mpp_challenge_id: 'challenge_123',
+          mpp_intent: 'charge',
+          mpp_sdk: sdkIdentifier,
+          request_id: 'req_123',
+        },
         receipt_email: 'customer@example.com',
       }),
     )
@@ -49,7 +62,14 @@ describe('recordCryptoPayment', () => {
     expect(create.mock.calls[1]?.[0]).not.toHaveProperty('hooks')
     expect(create.mock.calls[1]?.[0]).not.toHaveProperty('receipt_email')
     expect(create.mock.calls[1]?.[0]).toEqual(
-      expect.objectContaining({ metadata: { machine_payment: 'true' } }),
+      expect.objectContaining({
+        metadata: {
+          machine_payment: 'true',
+          mpp_challenge_id: 'challenge_123',
+          mpp_intent: 'charge',
+          mpp_sdk: sdkIdentifier,
+        },
+      }),
     )
     expect(create.mock.calls[1]?.[1]).toEqual(create.mock.calls[0]?.[1])
     expect(warning).toHaveBeenCalledWith(
@@ -65,6 +85,7 @@ describe('recordCryptoPayment', () => {
     await recordCryptoPayment(createClient(create), {
       amount: '500000',
       network: 'tempo',
+      analyticsMetadata: { machine_payment: 'true', mpp_sdk: sdkIdentifier },
       paymentIntentOptions: { customer: 'cus_123' },
       reference: '0xtx123',
     })
