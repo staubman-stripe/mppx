@@ -460,13 +460,7 @@ function createPaymentSuccessHandler(
   connect?: ConnectConfig,
   metadata?: Record<string, string>,
 ) {
-  return (params: {
-    challenge?: any
-    credential?: any
-    receipt: any
-    request: any
-    requestInput?: any
-  }) => {
+  return (params: { challenge?: any; receipt: any; request: any; requestInput?: any }) => {
     const { challenge, receipt, request, requestInput } = params
     if (receipt?.reference && request?.amount) {
       const resolvedMetadata = {
