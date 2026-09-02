@@ -3,5 +3,5 @@
 /** Current mppx package version. */
 export const version = '0.9.2'
 
-/** Canonical identifier for this mppx release. */
-export const userAgent = `mppx/${version}`
+/** Canonical SDK identifier for this mppx release. */
+export const sdkIdentifier = `mppx/${version}`

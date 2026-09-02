@@ -3,7 +3,7 @@ import { Mppx, stripe } from 'mppx/server'
 import { afterEach, describe, expect, test, vi } from 'vp/test'
 import * as Http from '~test/Http.js'
 
-import { userAgent } from '../../internal/version.js'
+import { sdkIdentifier } from '../../internal/version.js'
 import type { StripeClient } from '../internal/types.js'
 import type { charge as StripeCharge } from './Charge.js'
 
@@ -165,7 +165,7 @@ describe('stripe.charge with client', () => {
         machine_payment: 'true',
         mpp_challenge_id: challenge.id,
         mpp_intent: 'charge',
-        mpp_sdk: userAgent,
+        mpp_sdk: sdkIdentifier,
       },
       shared_payment_granted_token: 'spt_test_token',
     })

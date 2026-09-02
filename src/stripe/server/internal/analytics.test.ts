@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vp/test'
 
-import { userAgent } from '../../../internal/version.js'
+import { sdkIdentifier } from '../../../internal/version.js'
 import { buildAnalytics } from './analytics.js'
 
 const challenge = {
@@ -13,7 +13,7 @@ describe('buildAnalytics', () => {
     expect(buildAnalytics({ challenge })).toEqual({
       mpp_challenge_id: 'challenge_123',
       mpp_intent: 'charge',
-      mpp_sdk: userAgent,
+      mpp_sdk: sdkIdentifier,
     })
   })
 })

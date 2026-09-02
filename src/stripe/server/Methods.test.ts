@@ -1,7 +1,7 @@
 import { stripe } from 'mppx/server'
 import { describe, expect, test, vi } from 'vp/test'
 
-import { userAgent } from '../../internal/version.js'
+import { sdkIdentifier } from '../../internal/version.js'
 import type { AnyServer } from '../../Method.js'
 import type { StripeClient } from '../internal/types.js'
 
@@ -104,7 +104,7 @@ describe('stripe.create() defaultMethods', () => {
           machine_payment: 'custom',
           mpp_challenge_id: 'challenge_123',
           mpp_intent: 'charge',
-          mpp_sdk: userAgent,
+          mpp_sdk: sdkIdentifier,
           request_id: 'req_123',
         },
         receipt_email: 'customer@example.com',

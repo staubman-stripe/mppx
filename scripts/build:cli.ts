@@ -5,6 +5,7 @@ import path from 'node:path'
 import { build } from 'rolldown'
 
 const root = path.resolve(import.meta.dirname, '..')
+const packageJson = JSON.parse(fs.readFileSync(path.resolve(root, 'package.json'), 'utf8'))
 const externalPackages = [
   '@stripe/stripe-js',
   'eventsource-parser',
@@ -37,6 +38,11 @@ async function bundle(input: string, file: string) {
         },
       },
     ],
+    transform: {
+      define: {
+        __MPPX_CLI_VERSION__: JSON.stringify(packageJson.version),
+      },
+    },
     output: {
       codeSplitting: false,
       comments: { legal: true },

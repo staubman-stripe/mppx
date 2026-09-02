@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from 'vp/test'
 
-import { userAgent } from '../../../internal/version.js'
+import { sdkIdentifier } from '../../../internal/version.js'
 import type { StripeClient } from '../../internal/types.js'
 import { recordCryptoPayment } from './record-payment.js'
 
@@ -25,7 +25,7 @@ describe('recordCryptoPayment', () => {
       analyticsMetadata: {
         mpp_challenge_id: 'challenge_123',
         mpp_intent: 'charge',
-        mpp_sdk: userAgent,
+        mpp_sdk: sdkIdentifier,
       },
       paymentIntentOptions: {
         amount: 999,
@@ -51,7 +51,7 @@ describe('recordCryptoPayment', () => {
           machine_payment: 'custom',
           mpp_challenge_id: 'challenge_123',
           mpp_intent: 'charge',
-          mpp_sdk: userAgent,
+          mpp_sdk: sdkIdentifier,
           request_id: 'req_123',
         },
         receipt_email: 'customer@example.com',
@@ -66,7 +66,7 @@ describe('recordCryptoPayment', () => {
           machine_payment: 'true',
           mpp_challenge_id: 'challenge_123',
           mpp_intent: 'charge',
-          mpp_sdk: userAgent,
+          mpp_sdk: sdkIdentifier,
         },
       }),
     )
