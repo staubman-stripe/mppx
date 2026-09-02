@@ -10,7 +10,7 @@ import type { ConfiguredDefaults, LooseOmit, MaybePromise, OneOf } from '../../i
 import * as Method from '../../Method.js'
 import type * as Html from '../../server/internal/html/config.ts'
 import type * as z from '../../zod.js'
-import { machinePaymentMetadata, stripePreviewVersion } from '../internal/constants.js'
+import { stripePreviewVersion } from '../internal/constants.js'
 import type * as PaymentIntent from '../internal/payment-intent.js'
 import type {
   StripeClient,
@@ -193,7 +193,6 @@ export function charge<const parameters extends charge.Parameters>(parameters: p
         ...(hooks !== undefined && { hooks }),
         metadata: {
           ...buildAnalytics({ challenge }),
-          ...machinePaymentMetadata,
           ...userMetadata,
           ...optionMetadata,
         },

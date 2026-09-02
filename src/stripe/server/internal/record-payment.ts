@@ -1,4 +1,3 @@
-import { machinePaymentMetadata } from '../../internal/constants.js'
 import type * as PaymentIntent from '../../internal/payment-intent.js'
 import type { StripeClient } from '../../internal/types.js'
 import type { stripe } from '../Methods.js'
@@ -23,7 +22,7 @@ export function recordCryptoPayment(
     reference: string
     amount: string
     connect?: ConnectConfig
-    analyticsMetadata?: Record<string, string> | undefined
+    analyticsMetadata: Record<string, string>
     paymentIntentOptions?: PaymentIntent.Options | undefined
   },
 ): Promise<void> {
@@ -55,7 +54,7 @@ export function recordCryptoPayment(
         },
       },
     },
-    metadata: { ...analyticsMetadata, ...machinePaymentMetadata },
+    metadata: analyticsMetadata,
   }
   const options = {
     idempotencyKey: reference,
@@ -68,7 +67,7 @@ export function recordCryptoPayment(
       ...requiredParams,
       ...(customer !== undefined && { customer }),
       ...(hooks !== undefined && { hooks }),
-      metadata: { ...analyticsMetadata, ...machinePaymentMetadata, ...metadata },
+      metadata: { ...analyticsMetadata, ...metadata },
       ...(receipt_email !== undefined && { receipt_email }),
     },
     options,

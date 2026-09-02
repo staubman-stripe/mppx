@@ -23,6 +23,7 @@ describe('recordCryptoPayment', () => {
       amount: '500000',
       network: 'tempo',
       analyticsMetadata: {
+        machine_payment: 'true',
         mpp_challenge_id: 'challenge_123',
         mpp_intent: 'charge',
         mpp_sdk: sdkIdentifier,
@@ -84,6 +85,7 @@ describe('recordCryptoPayment', () => {
     await recordCryptoPayment(createClient(create), {
       amount: '500000',
       network: 'tempo',
+      analyticsMetadata: { machine_payment: 'true', mpp_sdk: sdkIdentifier },
       paymentIntentOptions: { customer: 'cus_123' },
       reference: '0xtx123',
     })
