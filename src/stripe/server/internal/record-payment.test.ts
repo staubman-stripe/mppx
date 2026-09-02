@@ -19,13 +19,13 @@ describe('recordCryptoPayment', () => {
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
     await recordCryptoPayment(createClient(create), {
+      amount: '500000',
+      network: 'tempo',
       analyticsMetadata: {
         mpp_challenge_id: 'challenge_123',
         mpp_intent: 'charge',
         mpp_server_id: 'api.example.com',
       },
-      amount: '500000',
-      network: 'tempo',
       paymentIntentOptions: {
         amount: 999,
         confirm: false,

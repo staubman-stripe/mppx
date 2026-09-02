@@ -481,8 +481,8 @@ function createPaymentSuccessHandler(
         network,
         reference: receipt.reference,
         amount: String(request.amount),
-        ...(challenge && { analyticsMetadata: buildAnalytics({ challenge, credential }) }),
         ...(connect && { connect }),
+        ...(challenge && { analyticsMetadata: buildAnalytics({ challenge, credential }) }),
         ...(Object.keys(paymentIntentOptions).length > 0 && { paymentIntentOptions }),
       })
     }

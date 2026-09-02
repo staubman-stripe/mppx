@@ -19,15 +19,15 @@ const NETWORK_CONFIG: Record<stripe.Network, { stripeNetworkName: string; tokenD
 export function recordCryptoPayment(
   client: StripeClient,
   parameters: {
-    analyticsMetadata?: Record<string, string> | undefined
     network: stripe.Network
     reference: string
     amount: string
     connect?: ConnectConfig
+    analyticsMetadata?: Record<string, string> | undefined
     paymentIntentOptions?: PaymentIntent.Options | undefined
   },
 ): Promise<void> {
-  const { analyticsMetadata, network, reference, amount, connect, paymentIntentOptions } =
+  const { network, reference, amount, connect, analyticsMetadata, paymentIntentOptions } =
     parameters
   const { customer, hooks, metadata, receipt_email } = paymentIntentOptions ?? {}
   const { stripeNetworkName, tokenDecimals } = NETWORK_CONFIG[network]
