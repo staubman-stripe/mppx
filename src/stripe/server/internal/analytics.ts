@@ -7,7 +7,7 @@ export function buildAnalytics(parameters: {
   challenge?: Pick<Challenge.Challenge, 'id' | 'intent'> | undefined
 }): Record<string, string> {
   const { challenge } = parameters
-  return {
+  const metadata = {
     ...machinePaymentMetadata,
     mpp_sdk: sdkIdentifier,
     ...(challenge && {
@@ -15,4 +15,7 @@ export function buildAnalytics(parameters: {
       mpp_intent: challenge.intent,
     }),
   }
+  return Object.fromEntries(
+    Object.entries(metadata).map(([key, value]) => [key, [...value].slice(0, 500).join('')]),
+  )
 }

@@ -24,4 +24,13 @@ describe('buildAnalytics', () => {
       mpp_sdk: sdkIdentifier,
     })
   })
+
+  test('limits metadata values to 500 characters', () => {
+    const metadata = buildAnalytics({
+      challenge: { id: 'i'.repeat(501), intent: '😀'.repeat(501) },
+    })
+
+    expect(metadata.mpp_challenge_id).toHaveLength(500)
+    expect([...metadata.mpp_intent!]).toHaveLength(500)
+  })
 })
