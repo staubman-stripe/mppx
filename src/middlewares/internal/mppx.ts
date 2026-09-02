@@ -55,9 +55,21 @@ export function wrap<mppx extends Mppx.Mppx<any, any>, handler>(
     }
     Object.assign(wrapWithMeta, methodFn)
     result[key] = wrapWithMeta
-    // Also set shorthand intent key if Mppx registered it (no collision)
-    if (!reservedMppxKeys.has(mi.intent) && (mppx as any)[mi.intent])
-      result[mi.intent] = wrapWithMeta
+    // Also set shorthand intent key, using the core-composed handler on collisions.
+    if (!reservedMppxKeys.has(mi.intent) && (mppx as any)[mi.intent]) {
+      const intentFn = (mppx as any)[mi.intent]
+      if (intentFn === methodFn) result[mi.intent] = wrapWithMeta
+      else {
+        const wrapIntentWithMeta = (options: any) => {
+          const configured = intentFn(options)
+          const handler = wrapper(intentFn, options) as any
+          if (configured._internal) handler._internal = configured._internal
+          return handler
+        }
+        Object.assign(wrapIntentWithMeta, intentFn)
+        result[mi.intent] = wrapIntentWithMeta
+      }
+    }
     // Build nested handlers: wrapped.tempo.charge(...)
     if (!result[mi.name] || typeof result[mi.name] !== 'object')
       result[mi.name] = {} as Record<string, unknown>

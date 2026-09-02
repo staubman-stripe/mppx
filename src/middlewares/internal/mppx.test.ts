@@ -148,6 +148,21 @@ describe('wrap: nested handlers', () => {
     expect(nestedResult.options).toEqual(slashResult.options)
   })
 
+  test('shorthand intent composes methods that share an intent', async () => {
+    const mppx = Mppx.create({ methods: [alphaMethod, betaMethod], realm, secretKey })
+
+    const wrapped = wrap(mppx as any, (methodFn, options) => methodFn(options))
+    const handler = wrapped.charge(challengeOpts)
+    const result = await handler(new Request('https://example.com/resource'))
+
+    expect(handler._internal?.offers).toHaveLength(2)
+    expect(result.status).toBe(402)
+    if (result.status !== 402) throw new Error()
+    expect(
+      Challenge.fromResponseList(result.challenge).map((challenge) => challenge.method),
+    ).toEqual(['alpha', 'beta'])
+  })
+
   test('compose is omitted from wrapped object', () => {
     const mppx = Mppx.create({ methods: [alphaMethod], realm, secretKey }) as any
 
