@@ -1,6 +1,7 @@
 import { stripe } from 'mppx/server'
 import { describe, expect, test, vi } from 'vp/test'
 
+import { sdkIdentifier } from '../../internal/version.js'
 import type { AnyServer } from '../../Method.js'
 import type { StripeClient } from '../internal/types.js'
 
@@ -76,6 +77,11 @@ describe('stripe.create() defaultMethods', () => {
     const tempoMethod = findMethod(methods, 'tempo', 'charge')
 
     await tempoMethod.onPaymentSuccess!({
+      challenge: {
+        id: 'challenge_123',
+        intent: 'charge',
+        realm: 'api.example.com',
+      } as any,
       receipt: { reference: '0xtx123' },
       request: { amount: '500000' },
       requestInput: {
@@ -92,7 +98,14 @@ describe('stripe.create() defaultMethods', () => {
       expect.objectContaining({
         customer: 'cus_123',
         hooks: { inputs: { tax: { calculation: 'taxcalc_123' } } },
-        metadata: { agent_id: 'test-agent', machine_payment: 'custom', request_id: 'req_123' },
+        metadata: {
+          agent_id: 'test-agent',
+          machine_payment: 'custom',
+          mpp_challenge_id: 'challenge_123',
+          mpp_intent: 'charge',
+          mpp_sdk: sdkIdentifier,
+          request_id: 'req_123',
+        },
         receipt_email: 'customer@example.com',
       }),
       expect.anything(),

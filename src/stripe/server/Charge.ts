@@ -10,7 +10,7 @@ import type { ConfiguredDefaults, LooseOmit, MaybePromise, OneOf } from '../../i
 import * as Method from '../../Method.js'
 import type * as Html from '../../server/internal/html/config.ts'
 import type * as z from '../../zod.js'
-import { machinePaymentMetadata, stripePreviewVersion } from '../internal/constants.js'
+import { stripePreviewVersion } from '../internal/constants.js'
 import type * as PaymentIntent from '../internal/payment-intent.js'
 import type {
   StripeClient,
@@ -19,6 +19,7 @@ import type {
   StripePaymentElementOptions,
 } from '../internal/types.js'
 import * as Methods from '../Methods.js'
+import { buildAnalytics } from './internal/analytics.js'
 import { html as htmlContent } from './internal/html.gen.js'
 
 /**
@@ -191,8 +192,7 @@ export function charge<const parameters extends charge.Parameters>(parameters: p
         ...(customer !== undefined && { customer }),
         ...(hooks !== undefined && { hooks }),
         metadata: {
-          ...buildAnalytics({ credential }),
-          ...machinePaymentMetadata,
+          ...buildAnalytics({ challenge }),
           ...userMetadata,
           ...optionMetadata,
         },
@@ -451,18 +451,6 @@ async function createWithSecretKey(parameters: {
   const replayed = response.headers.get('idempotent-replayed') === 'true'
   const result = (await response.json()) as { id: string; status: string }
   return { ...result, replayed }
-}
-
-/** @internal */
-function buildAnalytics(parameters: { credential: Credential.Credential }): Record<string, string> {
-  const { credential } = parameters
-  const { challenge } = credential
-  return {
-    mpp_intent: challenge.intent,
-    mpp_challenge_id: challenge.id,
-    mpp_server_id: challenge.realm,
-    ...(credential.source ? { mpp_client_id: credential.source } : {}),
-  }
 }
 
 function validateConnectSettlement(parameters: {

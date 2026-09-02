@@ -240,6 +240,12 @@ export type CanOfferFn<method extends Method> = (parameters: {
  * like recording the payment in an external system.
  */
 export type OnPaymentSuccessFn<method extends Method> = (parameters: {
+  /** Challenge associated with the successful payment. */
+  challenge?:
+    | DeepReadonly<
+        Challenge.Challenge<z.output<method['schema']['request']>, method['intent'], method['name']>
+      >
+    | undefined
   input?: globalThis.Request
   receipt: DeepReadonly<Receipt.Receipt>
   /** Canonical payment request included in the challenge. */
