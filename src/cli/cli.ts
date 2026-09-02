@@ -21,7 +21,7 @@ import * as x402_Header from '../x402/Header.js'
 import * as x402_ChallengeBrand from '../x402/internal/ChallengeBrand.js'
 import * as x402_Types from '../x402/Types.js'
 import { createDefaultStore, createKeychain, resolveAccountName } from './account.js'
-import { loadConfig, resolveAcceptPayment, selectChallenge } from './internal.js'
+import { loadConfig, preparePayment, resolveAcceptPayment, selectChallenge } from './internal.js'
 import type { Plugin } from './plugins/plugin.js'
 import {
   orderTempoChargeChallengesByBalance,
@@ -675,9 +675,15 @@ const cli = Cli.create('mppx', {
         !isTempoAccount(resolveAccountName(c.options.account))
       if (isTempoSessionChallenge(challenge) && persistentSessionAccount) {
         try {
+          const credentialContext = await preparePayment(
+            challenge,
+            loaded?.config.extensions,
+            pluginResult?.credentialContext,
+          )
           await runPersistentSessionRequest({
             challenge,
             challengeResponse: selectedChallengeResponse,
+            credentialContext,
             endpoint: url,
             fetch: targetFetch,
             fetchInput: fetchUrl,
@@ -708,10 +714,19 @@ const cli = Cli.create('mppx', {
           exitCode: 2,
         })
 
+      const credentialContext = await preparePayment(
+        challenge,
+        loaded?.config.extensions,
+        pluginResult?.credentialContext,
+      )
+
       // Create credential
       let credential: string
       if (pluginResult?.createCredential)
-        credential = await pluginResult.createCredential(selectedChallengeResponse)
+        credential = await pluginResult.createCredential(
+          selectedChallengeResponse,
+          credentialContext,
+        )
       else if (pluginResult) {
         const mppx = Mppx.create({
           methods: pluginResult.methods,
@@ -720,7 +735,7 @@ const cli = Cli.create('mppx', {
         })
         credential = await mppx.createCredential(
           selectedChallengeResponse,
-          pluginResult.credentialContext as undefined,
+          credentialContext as undefined,
         )
       } else if (configMethod) {
         const mppx = Mppx.create({
@@ -728,7 +743,10 @@ const cli = Cli.create('mppx', {
           polyfill: false,
           transport: selectedChallengeTransport(challenge),
         })
-        credential = await mppx.createCredential(selectedChallengeResponse)
+        credential = await mppx.createCredential(
+          selectedChallengeResponse,
+          credentialContext as never,
+        )
       } else throw new Error('unreachable')
 
       // Send credential and get response
@@ -1412,9 +1430,9 @@ const sign = Cli.create('sign', {
       headers: { [Constants.Headers.wwwAuthenticate]: wwwAuth },
     })
 
-    let credential: string
+    let pluginResult: Awaited<ReturnType<Plugin['setup']>> | undefined
     if (plugin) {
-      const result = await plugin.setup({
+      pluginResult = await plugin.setup({
         challenge,
         options: {
           account: c.options.account,
@@ -1426,18 +1444,24 @@ const sign = Cli.create('sign', {
         },
         methodOpts,
       })
-      if (result.createCredential) {
-        credential = await result.createCredential(fakeResponse)
+    }
+    const credentialContext = await preparePayment(
+      challenge,
+      loaded?.config.extensions,
+      pluginResult?.credentialContext,
+    )
+
+    let credential: string
+    if (pluginResult) {
+      if (pluginResult.createCredential) {
+        credential = await pluginResult.createCredential(fakeResponse, credentialContext)
       } else {
-        const mppx = Mppx.create({ methods: result.methods, polyfill: false })
-        credential = await mppx.createCredential(
-          fakeResponse,
-          result.credentialContext as undefined,
-        )
+        const mppx = Mppx.create({ methods: pluginResult.methods, polyfill: false })
+        credential = await mppx.createCredential(fakeResponse, credentialContext as undefined)
       }
     } else if (configMethod) {
       const mppx = Mppx.create({ methods: [configMethod], polyfill: false })
-      credential = await mppx.createCredential(fakeResponse)
+      credential = await mppx.createCredential(fakeResponse, credentialContext as never)
     } else {
       return c.error({
         code: 'UNSUPPORTED_METHOD',
