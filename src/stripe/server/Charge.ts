@@ -192,7 +192,7 @@ export function charge<const parameters extends charge.Parameters>(parameters: p
         ...(customer !== undefined && { customer }),
         ...(hooks !== undefined && { hooks }),
         metadata: {
-          ...buildAnalytics({ challenge, credential }),
+          ...buildAnalytics({ challenge }),
           ...machinePaymentMetadata,
           ...userMetadata,
           ...optionMetadata,

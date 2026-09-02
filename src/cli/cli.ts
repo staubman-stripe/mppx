@@ -1,5 +1,4 @@
 import * as fs from 'node:fs'
-import { createRequire } from 'node:module'
 import * as path from 'node:path'
 
 import { Cli, Errors, z } from 'incur'
@@ -16,6 +15,7 @@ import * as Mppx from '../client/Mppx.js'
 import * as Transport from '../client/Transport.js'
 import * as Constants from '../Constants.js'
 import { validate as validateDiscovery } from '../discovery/Validate.js'
+import { userAgent, version } from '../internal/version.js'
 import { isTempoSessionChallenge } from '../tempo/session/client/Transports.js'
 import * as x402_Header from '../x402/Header.js'
 import * as x402_ChallengeBrand from '../x402/internal/ChallengeBrand.js'
@@ -51,13 +51,6 @@ import {
   resolveRpcUrl,
 } from './utils.js'
 import validate from './validate/index.js'
-
-declare const __MPPX_CLI_VERSION__: string
-
-const version =
-  typeof __MPPX_CLI_VERSION__ === 'string'
-    ? __MPPX_CLI_VERSION__
-    : (createRequire(import.meta.url)('../../package.json') as { version: string }).version
 
 const accountSummarySchema = z.object({
   address: z.string(),
@@ -379,7 +372,7 @@ const cli = Cli.create('mppx', {
       .describe('Session selection: auto, new, or channel ID'),
     silent: z.boolean().default(false).describe('Silent mode (suppress progress and info)'),
     slippage: z.number().optional().describe('Tempo auto-swap max slippage percentage'),
-    userAgent: z.string().optional().default(`mppx/${version}`).describe('Set User-Agent header'),
+    userAgent: z.string().optional().default(userAgent).describe('Set User-Agent header'),
     verbose: z
       .number()
       .default(0)

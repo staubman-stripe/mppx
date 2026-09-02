@@ -467,7 +467,7 @@ function createPaymentSuccessHandler(
     request: any
     requestInput?: any
   }) => {
-    const { challenge, credential, receipt, request, requestInput } = params
+    const { challenge, receipt, request, requestInput } = params
     if (receipt?.reference && request?.amount) {
       const resolvedMetadata = {
         ...metadata,
@@ -482,7 +482,7 @@ function createPaymentSuccessHandler(
         reference: receipt.reference,
         amount: String(request.amount),
         ...(connect && { connect }),
-        ...(challenge && { analyticsMetadata: buildAnalytics({ challenge, credential }) }),
+        ...(challenge && { analyticsMetadata: buildAnalytics({ challenge }) }),
         ...(Object.keys(paymentIntentOptions).length > 0 && { paymentIntentOptions }),
       })
     }
