@@ -82,7 +82,6 @@ describe('stripe.create() defaultMethods', () => {
         intent: 'charge',
         realm: 'api.example.com',
       } as any,
-      credential: { source: 'did:example:client' } as any,
       receipt: { reference: '0xtx123' },
       request: { amount: '500000' },
       requestInput: {

@@ -537,7 +537,6 @@ export function create<
         if (ctx.method.name === mi.name && ctx.method.intent === mi.intent) {
           await mi.onPaymentSuccess({
             challenge: ctx.challenge,
-            ...(ctx.credential !== undefined && { credential: ctx.credential }),
             input: ctx.input,
             receipt: ctx.receipt,
             request: ctx.request,
