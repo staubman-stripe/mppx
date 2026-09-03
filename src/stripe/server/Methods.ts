@@ -462,6 +462,8 @@ function createPaymentSuccessHandler(
   connect?: ConnectConfig,
   metadata?: Record<string, string>,
 ) {
+  // Crypto rails have already settled by the time this hook runs. Resolve
+  // request-scoped options here so unpaid challenges do not trigger side effects.
   async function recordPayment(params: {
     challenge?: any
     receipt: any
@@ -471,6 +473,8 @@ function createPaymentSuccessHandler(
     const { challenge, receipt, request, requestInput } = params
     let paymentIntentOptions: PaymentIntent.Options | undefined
     try {
+      // MPPX supplies a challenge during normal payment flows, but the public
+      // onPaymentSuccess hook contract also permits direct calls without one.
       if (!challenge && typeof requestInput?.paymentIntentOptions === 'function')
         throw new Error('Cannot resolve PaymentIntent options without a payment challenge.')
       paymentIntentOptions = await PaymentIntent.resolve(requestInput?.paymentIntentOptions, {
@@ -479,6 +483,8 @@ function createPaymentSuccessHandler(
         request,
       })
     } catch (error) {
+      // The crypto payment cannot be rolled back, so preserve the existing
+      // best-effort behavior and record it without caller-provided options.
       console.error(
         '[stripe] failed to resolve PaymentIntent options; recording without them:',
         error,
@@ -546,6 +552,8 @@ function withPaymentIntentInput(method: Method.AnyServer): Method.AnyServer {
     async request(context: Method.RequestContext<Method.AnyServer>) {
       const { paymentIntentOptions, ...request } = context.request
       const resolved = baseRequest ? await baseRequest({ ...context, request }) : request
+      // Keep the server-only value in requestInput for the success hook. The
+      // schema transform above still excludes it from the signed challenge.
       return { ...resolved, paymentIntentOptions }
     },
     ...(baseRespond && {
