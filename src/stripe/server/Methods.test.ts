@@ -3,6 +3,7 @@ import { describe, expect, test, vi } from 'vp/test'
 
 import { sdkIdentifier } from '../../internal/version.js'
 import type { AnyServer } from '../../Method.js'
+import type * as PaymentIntent from '../internal/payment-intent.js'
 import type { StripeClient } from '../internal/types.js'
 
 function createMockStripeClient(): StripeClient {
@@ -233,6 +234,74 @@ describe('stripe.create() PI recording', () => {
     expect(result).toBeInstanceOf(Promise)
     await result
     expect(client.paymentIntents.create).toHaveBeenCalledOnce()
+  })
+
+  test('resolves PaymentIntent options after crypto payment success', async () => {
+    const client = createMockStripeClient()
+    const mp = stripe({
+      client,
+      networkId: 'test-profile',
+      livemode: false,
+      depositAddresses: mockResolver,
+    })
+    const paymentIntentOptions = vi.fn(
+      async ({ challenge, receipt, request }: PaymentIntent.ResolveOptionsContext) => ({
+        hooks: { inputs: { tax: { calculation: `taxcalc_${challenge.id}` } } },
+        metadata: { transaction: receipt?.reference ?? '', amount: String(request.amount) },
+      }),
+    )
+    const methods = await mp.defaultMethods()
+    const tempoMethod = findMethod(methods, 'tempo', 'charge')
+
+    await tempoMethod.onPaymentSuccess!({
+      challenge: { id: 'challenge_123', intent: 'charge', realm: 'api.example.com' } as any,
+      receipt: { reference: '0xtx123' },
+      request: { amount: '500000' },
+      requestInput: { paymentIntentOptions },
+    })
+
+    expect(paymentIntentOptions).toHaveBeenCalledOnce()
+    expect(client.paymentIntents.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hooks: { inputs: { tax: { calculation: 'taxcalc_challenge_123' } } },
+        metadata: expect.objectContaining({ amount: '500000', transaction: '0xtx123' }),
+      }),
+      expect.anything(),
+    )
+  })
+
+  test('records crypto payments without options when their resolver fails', async () => {
+    const client = createMockStripeClient()
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const mp = stripe({
+      client,
+      networkId: 'test-profile',
+      livemode: false,
+      depositAddresses: mockResolver,
+    })
+    const methods = await mp.defaultMethods()
+    const tempoMethod = findMethod(methods, 'tempo', 'charge')
+
+    await tempoMethod.onPaymentSuccess!({
+      challenge: { id: 'challenge_123', intent: 'charge', realm: 'api.example.com' } as any,
+      receipt: { reference: '0xtx123' },
+      request: { amount: '500000' },
+      requestInput: {
+        paymentIntentOptions: async () => {
+          throw new Error('Tax API unavailable')
+        },
+      },
+    })
+
+    expect(client.paymentIntents.create).toHaveBeenCalledOnce()
+    expect(client.paymentIntents.create).toHaveBeenCalledWith(
+      expect.not.objectContaining({ hooks: expect.anything() }),
+      expect.anything(),
+    )
+    expect(error).toHaveBeenCalledWith(
+      '[stripe] failed to resolve PaymentIntent options; recording without them:',
+      expect.any(Error),
+    )
   })
 
   test('onPaymentSuccess returns undefined when receipt has no reference', async () => {

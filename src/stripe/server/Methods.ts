@@ -19,6 +19,8 @@ import { type ConnectConfig } from './internal/request.js'
 export declare namespace stripe {
   type Network = 'tempo' | 'base' | 'solana'
 
+  type ResolvePaymentIntentOptionsContext = PaymentIntent.ResolveOptionsContext
+
   type DepositAddress<N extends Network = Network> = string & {
     readonly __brand: 'StripeDepositAddress'
     readonly __network: N
@@ -460,26 +462,50 @@ function createPaymentSuccessHandler(
   connect?: ConnectConfig,
   metadata?: Record<string, string>,
 ) {
-  return (params: { challenge?: any; receipt: any; request: any; requestInput?: any }) => {
+  async function recordPayment(params: {
+    challenge?: any
+    receipt: any
+    request: any
+    requestInput?: any
+  }) {
     const { challenge, receipt, request, requestInput } = params
-    if (receipt?.reference && request?.amount) {
-      const resolvedMetadata = {
-        ...metadata,
-        ...requestInput?.paymentIntentOptions?.metadata,
-      }
-      const paymentIntentOptions = {
-        ...requestInput?.paymentIntentOptions,
-        ...(Object.keys(resolvedMetadata).length > 0 && { metadata: resolvedMetadata }),
-      }
-      return recordCryptoPayment(client, {
-        network,
-        reference: receipt.reference,
-        amount: String(request.amount),
-        ...(connect && { connect }),
-        analyticsMetadata: buildAnalytics({ challenge }),
-        ...(Object.keys(paymentIntentOptions).length > 0 && { paymentIntentOptions }),
+    let paymentIntentOptions: PaymentIntent.Options | undefined
+    try {
+      if (!challenge && typeof requestInput?.paymentIntentOptions === 'function')
+        throw new Error('Cannot resolve PaymentIntent options without a payment challenge.')
+      paymentIntentOptions = await PaymentIntent.resolve(requestInput?.paymentIntentOptions, {
+        challenge,
+        receipt,
+        request,
       })
+    } catch (error) {
+      console.error(
+        '[stripe] failed to resolve PaymentIntent options; recording without them:',
+        error,
+      )
     }
+    const resolvedMetadata = {
+      ...metadata,
+      ...paymentIntentOptions?.metadata,
+    }
+    const resolvedPaymentIntentOptions = {
+      ...paymentIntentOptions,
+      ...(Object.keys(resolvedMetadata).length > 0 && { metadata: resolvedMetadata }),
+    }
+    return recordCryptoPayment(client, {
+      network,
+      reference: receipt.reference,
+      amount: String(request.amount),
+      ...(connect && { connect }),
+      analyticsMetadata: buildAnalytics({ challenge }),
+      ...(Object.keys(resolvedPaymentIntentOptions).length > 0 && {
+        paymentIntentOptions: resolvedPaymentIntentOptions,
+      }),
+    })
+  }
+
+  return (params: { challenge?: any; receipt: any; request: any; requestInput?: any }) => {
+    if (params.receipt?.reference && params.request?.amount) return recordPayment(params)
   }
 }
 
@@ -506,12 +532,12 @@ function withPaymentIntentInput(method: Method.AnyServer): Method.AnyServer {
       request: z.pipe(
         z.custom<
           z.input<typeof baseSchema> & {
-            paymentIntentOptions?: PaymentIntent.Options | undefined
+            paymentIntentOptions?: PaymentIntent.OptionsInput | undefined
           }
         >(),
         z.transform((input) => {
           const { paymentIntentOptions, ...request } = input
-          z.optional(PaymentIntent.Schema).parse(paymentIntentOptions)
+          z.optional(PaymentIntent.InputSchema).parse(paymentIntentOptions)
           // Only the base schema's output is included in the challenge.
           return baseSchema.parse(request)
         }),

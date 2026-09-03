@@ -248,6 +248,66 @@ describe('stripe.charge with client', () => {
     expect(params.receipt_email).toBe('customer@example.com')
   })
 
+  test('behavior: resolves PaymentIntent options after challenge validation', async () => {
+    const { client, create } = createMockStripeClient()
+    const paymentIntentOptions = vi.fn(
+      async ({ challenge, request }: StripeCharge.ResolvePaymentIntentOptionsContext) => {
+        expect(request.amount).toBe('100')
+        return {
+          hooks: { inputs: { tax: { calculation: `taxcalc_${challenge.id}` } } },
+          metadata: { order: 'order_123' },
+        }
+      },
+    )
+    const server = Mppx.create({
+      methods: [stripe.charge({ client, networkId: 'internal', paymentMethodTypes: ['card'] })],
+      realm,
+      secretKey,
+    })
+    const handle = server.charge({
+      amount: '1',
+      currency: 'usd',
+      decimals: 2,
+      paymentIntentOptions,
+    })
+
+    const firstResult = await handle(new Request('https://example.com'))
+    expect(firstResult.status).toBe(402)
+    expect(paymentIntentOptions).not.toHaveBeenCalled()
+    if (firstResult.status !== 402) throw new Error()
+
+    const challenge = Challenge.fromResponse(firstResult.challenge)
+    expect(challenge.request).not.toHaveProperty('paymentIntentOptions')
+    const forgedCredential = Credential.from({
+      challenge: { ...challenge, id: 'forged' },
+      payload: { spt: 'spt_test_token' },
+    })
+    const rejected = await handle(
+      new Request('https://example.com', {
+        headers: { Authorization: Credential.serialize(forgedCredential) },
+      }),
+    )
+    expect(rejected.status).toBe(402)
+    expect(paymentIntentOptions).not.toHaveBeenCalled()
+
+    const credential = Credential.from({ challenge, payload: { spt: 'spt_test_token' } })
+    const result = await handle(
+      new Request('https://example.com', {
+        headers: { Authorization: Credential.serialize(credential) },
+      }),
+    )
+
+    expect(result.status).toBe(200)
+    expect(paymentIntentOptions).toHaveBeenCalledOnce()
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hooks: { inputs: { tax: { calculation: `taxcalc_${challenge.id}` } } },
+        metadata: expect.objectContaining({ order: 'order_123' }),
+      }),
+      expect.anything(),
+    )
+  })
+
   test('behavior: applies Connect settlement parameters in client call', async () => {
     const { client, create } = createMockStripeClient()
 

@@ -1,3 +1,6 @@
+import type * as Challenge from '../../Challenge.js'
+import type { MaybePromise } from '../../internal/types.js'
+import type * as Receipt from '../../Receipt.js'
 import * as z from '../../zod.js'
 
 /** Stripe PaymentIntent options accepted only by server-side method input. */
@@ -15,3 +18,30 @@ export const Schema = z.object({
 })
 
 export type Options = z.infer<typeof Schema>
+
+/** Context provided when resolving request-scoped PaymentIntent options. */
+export type ResolveOptionsContext = {
+  challenge: Challenge.Challenge
+  /** Receipt for payments completed before their PaymentIntent is recorded. */
+  receipt?: Receipt.Receipt | undefined
+  request: Record<string, unknown>
+}
+
+/** Lazily resolves request-scoped PaymentIntent options after payment validation. */
+export type ResolveOptions = (context: ResolveOptionsContext) => MaybePromise<Options | undefined>
+
+export type OptionsInput = Options | ResolveOptions
+
+const ResolveOptionsSchema = z.custom<ResolveOptions>((value) => typeof value === 'function')
+
+/** PaymentIntent options accepted only by server-side method input. */
+export const InputSchema = z.union([Schema, ResolveOptionsSchema])
+
+/** Resolves and validates request-scoped PaymentIntent options. */
+export async function resolve(
+  input: OptionsInput | undefined,
+  context: ResolveOptionsContext,
+): Promise<Options | undefined> {
+  const options = typeof input === 'function' ? await input(context) : input
+  return z.optional(Schema).parse(options)
+}
