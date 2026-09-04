@@ -4,229 +4,204 @@ Status: implementation specification; not yet implemented
 
 Working branch: `staubman/resolved-pi-options`
 
-Current branch head when this document was written: `ac42997`
-
 ## Objective
 
 Allow Stripe `paymentIntentOptions` to be either a static object or an asynchronous,
-request-scoped resolver while running the resolver at the latest safe point before a
-payment is settled whenever the payment method supports that lifecycle.
+request-scoped resolver, and run the resolver at the latest safe point before a payment
+is settled whenever the selected payment method supports that lifecycle.
 
 The primary use case is Stripe Tax for machine payments:
 
-- The initial unauthenticated request should return a 402 without creating a Tax
+- The initial unauthenticated request must return a 402 without creating a Tax
   Calculation.
-- A submitted credential should be authenticated and, where possible, validated
-  non-destructively before creating a Tax Calculation.
-- An address that Stripe Tax cannot use must stop a server-broadcast payment and
-  produce an actionable HTTP error.
-- A successful Tax Calculation must be attached to the PaymentIntent that captures
-  an SPT or records a crypto payment.
-- Resolver output and other Stripe-only input must never enter the signed payment
-  challenge.
+- A submitted credential should pass MPPX's challenge checks and, where supported,
+  method validation before creating a Tax Calculation.
+- An address that Stripe Tax cannot use should stop a server-controlled payment and
+  return an actionable HTTP error.
+- A successful Tax Calculation must be attached to the PaymentIntent that captures an
+  SPT or records a crypto payment.
+- Resolver input and output must remain server-only and must never enter the signed
+  payment challenge.
 
-## Why this work exists
+This can be implemented entirely in Stripe's existing method wrappers. It does not
+require a new MPPX core lifecycle hook.
+
+## Background
 
 Stripe Tax requires a Tax Calculation ID when the PaymentIntent is created. Creating
-the calculation before issuing the initial 402 is undesirable because most initial
-requests never become paid requests, and Stripe charges for Calculation API usage.
+that calculation before issuing the initial 402 is undesirable because many initial
+requests never become paid requests, and Calculation API calls are billable.
 
-The first implementation therefore made `paymentIntentOptions` accept a function.
-It currently resolves at two different points:
+The first branch implementation made `paymentIntentOptions` accept a function and
+resolved it at two different points:
 
-- SPT: inside `src/stripe/server/Charge.ts`, after MPPX validates the signed
-  challenge and parses the credential payload, but before Stripe creates the
-  PaymentIntent.
+- SPT: inside `src/stripe/server/Charge.ts`, after MPPX authenticates the challenge
+  and after Connect settlement resolution, but before PaymentIntent creation.
 - Crypto: inside the `onPaymentSuccess` recorder in
   `src/stripe/server/Methods.ts`, after the crypto payment has settled.
 
-That implementation demonstrates the API shape, but resolving after crypto success
-is too late for inputs such as tax location. If Stripe Tax rejects the address, the
-payment has already occurred and MPPX can only record the PaymentIntent without Tax
-options.
+The SPT timing is appropriate. The crypto timing is too late for options that must be
+validated before accepting payment. If Stripe Tax rejects the address after broadcast,
+the payment has already occurred.
 
-The local `taxServer.js` currently works around this by detecting credentials in the
-application, calling `mppx.validateCredential()` when supported, creating the Tax
-Calculation, and then passing a static options object to `compose()`. This produces
-the desired behavior but leaks method lifecycle and capability checks into every
-application.
+The local `taxServer.js` currently works around this by detecting a credential,
+calling `mppx.validateCredential()` when the selected method supports it, creating the
+Tax Calculation, and passing a static options object into `compose()`. That has the
+right broad ordering but requires applications to inspect method capabilities and
+understand MPPX lifecycle details.
+
+## Key observation
+
+`withPaymentIntentInput()` in `src/stripe/server/Methods.ts` already wraps the
+underlying rail's `validate`, `broadcast`, and legacy `verify` functions.
+
+MPPX core already invokes split methods in this order:
+
+```text
+method.validate()
+→ method.broadcast()
+```
+
+Therefore, resolving options at the beginning of the wrapper's `broadcast()` gives
+the desired ordering automatically:
+
+```text
+underlying validate
+→ wrapped broadcast begins
+→ resolve paymentIntentOptions
+→ underlying broadcast
+→ payment.success recording
+```
+
+For a method that only exposes legacy `verify`, resolve at the beginning of the
+wrapper's `verify()`:
+
+```text
+wrapped verify begins
+→ resolve paymentIntentOptions
+→ underlying verify
+```
+
+No MPPX core changes or new generic hooks are necessary.
 
 ## Decisions already made
 
 1. Keep the object-or-resolver API. It follows the existing Stripe Connect resolver
    precedent and is useful beyond Tax.
-2. Resolve as late as possible. Existing checks and Connect settlement resolution
-   should happen before expensive resolver work when their ordering permits it.
+2. Resolve as late as possible. All core challenge checks, method validation, and
+   other existing preparation should happen first when their lifecycle permits it.
 3. Use non-mutating validation only. `mppx.validateCredential()` is non-mutating;
-   `verifyCredential()` is a deprecated alias for broadcast and must never be used
-   as a preflight operation.
-4. Do not require every method to implement `validate`. Stripe SPT cannot validate
-   an SPT independently of PaymentIntent creation. Legacy `verify` methods also
-   combine validation and settlement.
-5. Keep resolver values server-side. They must be retained in request-local input,
-   stripped from the canonical method request, and omitted from the challenge.
-6. Preserve static-object behavior and API compatibility.
-7. Keep the shared resolver request type broad for now. The current
-   `Record<string, unknown>` type is intentionally accepted even though normal MPPX
-   handlers preserve more precise method request types.
-8. Do not expose a receipt to a pre-settlement resolver. A receipt does not exist
-   before broadcast. Receipt-dependent work belongs in `onPaymentSuccess`.
-9. Framework exceptions are not portable. Resolver code running inside MPPX should
-   throw an MPPX `PaymentError`, such as `Errors.BadRequestError`, rather than Hono's
+   `verifyCredential()` aliases broadcast and must not be used as preflight validation.
+4. Do not require every method to expose `validate`. Stripe SPT has no independent,
+   non-consuming verification API, and legacy methods combine validation and payment.
+5. Keep Stripe-only values server-side. The resolver function and its output must be
+   omitted from the canonical method request and signed challenge.
+6. Preserve static-object behavior and backward compatibility.
+7. Keep the shared resolver's `request` type as `Record<string, unknown>` for now.
+   More precise method-generic typing is desirable but explicitly out of scope.
+8. Remove `receipt` from the resolver context. No receipt exists at the required
+   pre-broadcast point. Receipt-dependent work belongs in `onPaymentSuccess`.
+9. Use MPPX errors inside the resolver. A caller-input problem should throw
+   `Errors.BadRequestError`, not a framework-specific exception such as Hono's
    `HTTPException`.
+10. Use the challenge ID as the Stripe Tax idempotency key. Address binding is deferred.
 
-## Payment-method lifecycle constraints
+## Required lifecycle behavior
 
 ### Split `validate` and `broadcast` methods
 
-Tempo charge implements both hooks. For a signed transaction credential, validation
-checks and simulates the transaction without broadcasting it. The desired order is:
+Tempo charge exposes both hooks. MPPX core calls the wrapped `validate` hook before the
+wrapped `broadcast` hook. The Stripe wrapper must not resolve options in `validate`.
+
+The required sequence is:
 
 ```text
-MPPX challenge/HMAC/route/payload checks
-→ method.validate()
-→ resolve server-only PaymentIntent options
-→ method.broadcast()
-→ record the crypto PaymentIntent using the resolved options
+MPPX HMAC, expiry, route-binding, and payload checks
+→ wrapped validate strips Stripe-only input
+→ underlying validate succeeds without mutation
+→ wrapped broadcast resolves PaymentIntent options
+→ wrapped broadcast replaces the resolver with the resolved object in requestInput
+→ wrapped broadcast strips Stripe-only input
+→ underlying broadcast settles the payment
+→ onPaymentSuccess records the PaymentIntent using the resolved object
 ```
 
-If validation or option resolution fails, broadcast must not run.
+If validation fails, the resolver and broadcast must not run. If the resolver fails,
+the underlying broadcast must not run.
 
 ### Combined `verify` methods
 
-Stripe SPT has no independent, non-consuming verification API. Stripe validates the
-SPT as part of PaymentIntent creation. Its desired internal order is:
+For custom rails that expose only legacy `verify`, `withPaymentIntentInput()` must
+resolve options immediately before delegating to the underlying `verify` hook.
+
+There is no independent non-mutating validation step in this lifecycle. This is an
+inherent limitation of a combined verification/payment API.
+
+### Stripe SPT
+
+SPT uses the dedicated `stripe.charge()` implementation rather than
+`withPaymentIntentInput()`. Keep resolution inside `Charge.verify()` with this order:
 
 ```text
-MPPX challenge/HMAC/route/payload checks
+MPPX HMAC, expiry, route-binding, and payload checks
 → resolve and validate Connect settlement
-→ resolve server-only PaymentIntent options
-→ create/confirm Stripe PaymentIntent with the SPT
+→ resolve paymentIntentOptions
+→ create and confirm the Stripe PaymentIntent
 ```
 
-A legitimate signed challenge containing an invalid SPT can still trigger a Tax
-Calculation. There is no way around this without a separate non-consuming Stripe SPT
-verification API. Challenge-based idempotency and endpoint rate limiting are the
+This preserves the current branch's desirable Connect-before-Tax ordering.
+
+Stripe does not provide a separate non-consuming SPT verification API. A legitimate
+challenge submitted with an invalid SPT can therefore trigger a Tax Calculation before
+Stripe rejects the SPT. Challenge-based idempotency and endpoint rate limiting are the
 appropriate mitigations.
 
-### Already-broadcast crypto credentials
+### Already-settled crypto credentials
 
 Tempo also accepts transaction-hash credentials for payments broadcast elsewhere.
-Validation necessarily observes a payment that already happened. No lifecycle hook
-can make Tax validation pre-payment in that mode.
+Non-mutating validation observes a transfer that already happened. Resolving before
+the wrapper delegates to `broadcast` cannot retroactively make that resolution
+pre-payment.
 
-The implementation must document this limitation. At minimum, a resolver failure
-must not claim that the payment was prevented. A production integration needs a
-reconciliation/remediation path for a valid existing transaction that cannot be
-recorded with Tax options.
+The implementation and guide must describe this accurately. A production integration
+needs reconciliation or remediation for an existing transfer that cannot be recorded
+with Tax options. Do not claim resolver failure prevented such a transfer.
 
-Do not silently assume every `validate` hook means funds have not moved. It only
-guarantees that this invocation is non-mutating.
+## Request-local state propagation
 
-## Proposed MPPX lifecycle hook
+The wrapper receives the same route request-input object that MPPX later snapshots as
+`payment.success.requestInput`. This object contains the server-only
+`paymentIntentOptions` value even though the method request schema strips that field
+from the canonical challenge.
 
-Add a generic server-method hook, provisionally named `prepare`, that can replace
-server-only request input immediately before the terminal payment operation.
+At the beginning of wrapped `broadcast` or `verify`:
 
-The exact name is open to maintainers, but it must not be confused with the existing
-`preflight` hook. `preflight` runs before challenge processing and can return an HTTP
-response; this new hook runs only for a credential-bearing terminal payment path.
+1. Read the resolver or static object from `context.request.paymentIntentOptions`.
+2. Resolve and validate it with `PaymentIntent.resolve()`.
+3. Replace only `context.request.paymentIntentOptions` with the resolved static object.
+4. Delegate to the underlying method with `paymentIntentOptions` removed, using the
+   existing `withoutPaymentIntentOptions()` helper.
 
-Suggested types in `src/Method.ts`:
+The deliberate request-input mutation is request-local. It is not a mutation of:
 
-```ts
-export type PrepareContext<method extends Method> = VerifyContext<method> & {
-  /** Result returned by method.validate(), when the method has one. */
-  validation?: Validation<method> | undefined
-  /** HTTP input when the active transport is HTTP. */
-  input?: globalThis.Request | undefined
-}
+- `credential.challenge.request`
+- The verified envelope's canonical request
+- The canonical `payment.success.request`
+- Shared method configuration
 
-export type PrepareFn<method extends Method> = (
-  context: PrepareContext<method>,
-) => MaybePromise<z.input<method['schema']['request']>>
-```
+MPPX later snapshots the mutated route input for `payment.success.requestInput`, so the
+crypto recorder can consume the resolved object without a global map, a second resolver
+call, or changes to MPPX core.
 
-Add `prepare?: PrepareFn<method>` to `Method.Server`, `Method.toServer.Options`, and
-the relevant plumbing in `src/server/Mppx.ts`.
+Only the `paymentIntentOptions` property may be replaced. Never mutate amount,
+currency, recipient, method details, or any other canonical field.
 
-The return value is a new request input, not a canonical request. This allows a
-function-valued `paymentIntentOptions` field to be replaced with its resolved object
-without introducing a global map or mutating shared method state.
+Confirm with a test that the request object is mutable and that the same object is used
+for the terminal call and success-event input. If an upstream invariant prevents this
+mutation, stop and reassess rather than adding shared mutable state. The fallback
+design should be an explicit request-local carrier in MPPX, not a process-global map.
 
-### Required core ordering
-
-Within the credential-bearing path in `createMethodFn`:
-
-```ts
-let validation
-if (broadcast && validate)
-  validation = await validate({ credential, envelope, request: terminalRequest })
-
-if (prepare)
-  terminalRequest = await prepare({
-    credential,
-    envelope,
-    input: input instanceof Request ? input : undefined,
-    request: terminalRequest,
-    validation,
-  })
-
-const terminal = broadcast ?? verify
-receipt = await terminal({ credential, envelope, request: terminalRequest })
-```
-
-The pseudocode is illustrative. Follow repository formatting and preserve current
-failure-event behavior.
-
-When a method has no `validate`, `prepare` runs immediately before `broadcast` or
-legacy `verify`. A method may also resolve its data inside `verify` when it needs
-method-specific ordering that the generic hook cannot express. Stripe SPT should
-retain its resolver inside `Charge.verify()` so Connect resolution remains ahead of
-PaymentIntent option resolution.
-
-`mppx.validateCredential()` must not invoke `prepare`; it promises a non-mutating
-advisory check and must not create Tax Calculations. The normal composed payment path
-and terminal `broadcastCredential()` path should use preparation before settlement
-when request-local preparation input is available.
-
-### Canonical-request safety invariant
-
-Preparation must not be allowed to alter the payment represented by the signed
-challenge.
-
-After `prepare` returns, parse the returned request input through the method request
-schema and verify that its canonical output is equivalent to the canonical request
-that was accepted before preparation. Reject changes to amount, currency, recipient,
-method details, or any other canonical field.
-
-Stripe-only fields are safe because the Stripe wrappers deliberately strip
-`paymentIntentOptions` during the method schema transform. The invariant should be
-enforced in MPPX core rather than relying solely on wrapper discipline.
-
-Do not add resolved options to `challenge.request`, serialized headers, stable
-bindings, or the verified envelope's canonical request.
-
-### Request-local propagation
-
-Use the prepared request input for:
-
-- The terminal `broadcast` or `verify` call.
-- `respond`, subject to existing method wrappers stripping Stripe-only fields.
-- `payment.success` context's `requestInput`.
-
-Continue using the original canonical request for:
-
-- The challenge and verified envelope.
-- Payment success context's `request`.
-- Payment failure reporting and challenge binding.
-
-This lets the existing crypto PaymentIntent recorder read the resolved static options
-from `requestInput` without invoking the resolver again.
-
-## Stripe changes
-
-### Shared PaymentIntent option types
+## Resolver context
 
 `src/stripe/internal/payment-intent.ts` should continue accepting:
 
@@ -234,282 +209,319 @@ from `requestInput` without invoking the resolver again.
 type OptionsInput = Options | ResolveOptions
 ```
 
-Revise the resolver context for pre-settlement execution:
+Use a pre-payment context such as:
 
 ```ts
 type ResolveOptionsContext = {
   challenge: Challenge.Challenge
   credential: Credential.Credential
   envelope?: Method.VerifiedChallengeEnvelope | undefined
-  input?: Request | undefined
   request: Record<string, unknown>
-  validation?: Method.Validation | undefined
 }
 ```
 
-Remove `receipt`. It cannot be consistently available at the required lifecycle
-point. The returned options must still be parsed through `PaymentIntent.Schema` so a
-resolver cannot bypass validation applied to static options.
+The direct SPT call and crypto wrapper both have these fields. `request` is the payment
+method request, not the raw HTTP request. Applications can parse an HTTP body before
+calling `compose()` and close over the parsed data in the resolver.
 
-### Stripe SPT
+Do not include `receipt`; it does not exist before broadcast. Do not add raw HTTP input
+as part of this change unless a concrete use case requires it. MPPX core has the input
+at runtime, but the terminal method context does not currently expose it.
 
-Keep resolution in `src/stripe/server/Charge.ts` rather than configuring the generic
-`prepare` hook unless Connect settlement is also moved into preparation.
+The resolver's returned value must still be parsed through `PaymentIntent.Schema` so a
+function cannot bypass the validation applied to static option objects.
 
-Required order inside `Charge.verify()`:
+## Stripe implementation details
 
-1. Resolve the canonical request.
-2. Check expiry and credential payload shape.
-3. Verify server-bound external ID constraints.
-4. Resolve and validate Connect settlement.
-5. Resolve `paymentIntentOptions`.
-6. Assemble immutable Stripe-controlled PaymentIntent fields and metadata.
-7. Create/confirm the PaymentIntent.
+### `src/stripe/internal/payment-intent.ts`
 
-This is the current branch's ordering and should remain.
+- Retain `Options`, `OptionsInput`, `InputSchema`, and `resolve()`.
+- Update `ResolveOptionsContext` to represent pre-payment data.
+- Add credential and optional envelope.
+- Remove receipt.
+- Keep `request` broad as previously decided.
+- Continue validating resolved output with `PaymentIntent.Schema`.
 
-### Crypto and custom rails
+### `src/stripe/server/Charge.ts`
 
-Update `withPaymentIntentInput()` in `src/stripe/server/Methods.ts` to configure or
-compose the new `prepare` hook:
+- Keep the existing resolver call inside `Charge.verify()`.
+- Preserve Connect settlement resolution before PaymentIntent option resolution.
+- Pass `credential` and `envelope` into the resolver context.
+- Continue merging Stripe analytics, method metadata, and resolved option metadata in
+  the current precedence order.
+- Do not allow the resolver to override amount, currency, confirmation, SPT, or other
+  Stripe-controlled fields.
 
-1. Preserve any underlying method `prepare` hook.
-2. Pass the underlying hook a request with Stripe-only fields removed.
-3. Run the underlying preparation first.
-4. Resolve `paymentIntentOptions` last.
-5. Return the prepared underlying request with the resolved static options reattached.
+### `src/stripe/server/Methods.ts`
 
-Running the PaymentIntent resolver last preserves the existing preference to defer
-expensive Tax work until all earlier method checks and preparation have succeeded.
+Modify `withPaymentIntentInput()` rather than MPPX core.
 
-Simplify `createPaymentSuccessHandler()` back to static option handling. It should no
-longer invoke or catch the resolver. The recorder should receive the resolved object
-from `requestInput`.
+Add an internal helper conceptually equivalent to:
 
-If the resolver fails before a server-broadcast crypto payment, terminal broadcast
-must not occur. Do not fall back to recording without Tax options in that case.
+```ts
+async function resolvePaymentIntentOptions<context extends Method.VerifyContext<Method.AnyServer>>(
+  context: context,
+): Promise<context> {
+  const input = context.request.paymentIntentOptions
+  const { paymentIntentOptions: _, ...request } = context.request
+  const resolved = await PaymentIntent.resolve(input, {
+    challenge: context.credential.challenge,
+    credential: context.credential,
+    envelope: context.envelope,
+    request,
+  })
 
-For methods whose credential represents an already-settled external transaction,
-follow the explicit policy selected during implementation and document it. A
-reasonable first implementation is to fail and require reconciliation, matching the
-fact that the application cannot retroactively make the address valid. Do not describe
-that failure as preventing the already-existing transfer.
+  context.request.paymentIntentOptions = resolved
+  return context
+}
+```
+
+This is pseudocode, not copy-ready TypeScript. Use appropriate local types, preserve
+optional-property conventions, and avoid `any` where the wrapper can retain types.
+
+Compose hooks as follows:
+
+```ts
+validate(context) {
+  return baseValidate(withoutPaymentIntentOptions(context))
+}
+
+async broadcast(context) {
+  await resolvePaymentIntentOptions(context)
+  return baseBroadcast(withoutPaymentIntentOptions(context))
+}
+
+async verify(context) {
+  await resolvePaymentIntentOptions(context)
+  return baseVerify(withoutPaymentIntentOptions(context))
+}
+```
+
+Important details:
+
+- Do not resolve in wrapped `validate`; this keeps `mppx.validateCredential()` pure.
+- MPPX chooses `broadcast` when it exists, so a normal split-method payment resolves
+  exactly once even though a compatibility `verify` function may also exist.
+- Preserve an underlying wrapper/hook if one exists; do not replace unrelated behavior.
+- Underlying validate, broadcast, verify, and respond hooks must never see Stripe-only
+  options.
+- If `paymentIntentOptions` is absent, resolution should be a cheap no-op.
+
+Simplify `createPaymentSuccessHandler()` so it only accepts static resolved options.
+Remove post-success resolver invocation, its optional-challenge guard, and the fallback
+that records without options when the resolver fails. In a normal composed crypto flow,
+the resolver has already succeeded before broadcast.
+
+The handler may defensively ignore an unresolved function if someone invokes the public
+`onPaymentSuccess` hook directly, but it must not execute side-effecting resolution
+after payment as the normal path.
+
+### `src/stripe/Methods.ts`
+
+Keep `PaymentIntent.InputSchema` so the route input accepts static objects and
+functions, while its transform continues to omit `paymentIntentOptions` from canonical
+output.
 
 ## Error semantics
 
-Resolver failures happen after MPPX has authenticated the challenge and, when
-available, after method validation.
+The resolver executes inside wrapped `broadcast`, wrapped `verify`, or SPT
+`Charge.verify()`. These terminal calls already run inside MPPX's normal payment-error
+handling.
 
-- A resolver may throw `Errors.BadRequestError` for safe, actionable caller input
-  errors such as an unusable tax location.
-- MPPX should preserve `PaymentError` instances, emit the existing `payment.failed`
-  event, and use the error's HTTP status and RFC 9457 problem details.
-- Unexpected errors must remain sanitized as `InternalPaymentError` with HTTP 500;
-  do not expose raw Stripe errors or addresses.
-- Never recognize or propagate framework-specific exceptions such as Hono's
-  `HTTPException` from library code.
-- No terminal `broadcast`, legacy `verify`, or Stripe PaymentIntent creation may run
-  after preparation fails.
+- A resolver should throw `Errors.BadRequestError` for safe, actionable request errors
+  such as an unusable tax location.
+- MPPX preserves `PaymentError` instances and serializes their status and RFC 9457
+  problem details. `BadRequestError` therefore produces an HTTP 400 response.
+- Unexpected resolver errors are sanitized as `InternalPaymentError` with HTTP 500.
+  Do not expose raw Stripe errors or address data.
+- Hono's `HTTPException` is not an MPPX `PaymentError` and will be sanitized as an
+  internal error when thrown from inside the resolver.
+- If resolution fails, the underlying terminal hook or SPT PaymentIntent creation must
+  not run.
 
-The internal `MethodFn.Response` discriminator may still be `status: 402` while its
-`challenge` is an HTTP `Response` with status 400 or 500. Existing application code
-returns `payment.challenge`, whose actual HTTP status is authoritative. Do not add
-application logic that assumes every `payment.status === 402` response has HTTP
-status 402.
+The internal `MethodFn.Response` discriminant remains `status: 402` for challenge-like
+responses even when `payment.challenge` is an HTTP `Response` with status 400 or 500.
+Applications normally return `payment.challenge`; its actual HTTP status is
+authoritative.
 
-## Tax server after the core implementation
+## Tax server after implementation
 
-Once the lifecycle hook is implemented, remove the credential inspection and
-`validateCredential()` workaround from the local `taxServer.js`.
-
-The route should return to this shape:
+After the wrapper timing is implemented, remove the local credential-inspection and
+`validateCredential()` workaround from `taxServer.js` and return to a resolver:
 
 ```js
-const address = await parseAddress(request)
-const paymentIntentOptions = async ({ challenge }) => {
-  try {
-    const calculation = await stripeClient.tax.calculations.create(calculationParameters(address), {
-      idempotencyKey: `mpp_tax_${challenge.id}`,
-    })
-    return { hooks: { inputs: { tax: { calculation: calculation.id } } } }
-  } catch (error) {
-    if (isInvalidTaxLocation(error)) {
-      throw new Errors.BadRequestError({
-        reason: 'Stripe Tax could not determine a tax location. Check the billing address',
+function paymentIntentOptions(address) {
+  const parameters = calculationParameters(address)
+  return async ({ challenge }) => {
+    try {
+      const calculation = await stripeClient.tax.calculations.create(parameters, {
+        idempotencyKey: `mpp_tax_${challenge.id}`,
       })
+      return { hooks: { inputs: { tax: { calculation: calculation.id } } } }
+    } catch (error) {
+      if (isInvalidTaxLocation(error)) {
+        throw new Errors.BadRequestError({
+          reason: 'Stripe Tax could not determine a tax location. Check the billing address',
+        })
+      }
+      throw error
     }
-    throw error
   }
 }
 
+const address = await parseAddress(request)
+const options = paymentIntentOptions(address)
 const payment = await mppx.compose(
-  ['tempo/charge', { amount: '0.50', paymentIntentOptions }],
-  ['stripe/charge', { amount: '0.50', paymentIntentOptions }],
+  ['tempo/charge', { amount: '0.50', paymentIntentOptions: options }],
+  ['stripe/charge', { amount: '0.50', paymentIntentOptions: options }],
 )(request)
 ```
 
-The same resolver may be supplied to both offers because credential dispatch invokes
-only the selected method's terminal path. The initial 402 path must not call it.
+The same resolver can be supplied to both offers. Credential dispatch invokes only the
+selected method's terminal path, and the initial challenge path invokes neither.
 
-Use the challenge ID as the Tax Calculation idempotency key, as already decided. The
-address is intentionally not challenge-bound in this iteration.
+## Implementation plan
 
-## Implementation plan by file
+1. Update resolver context in `src/stripe/internal/payment-intent.ts`.
+2. Pass the richer context from SPT `Charge.verify()` without changing Connect order.
+3. Add the resolve-before-delegate behavior to wrapped crypto `broadcast` and legacy
+   `verify` in `withPaymentIntentInput()`.
+4. Ensure the resolved static object is visible in success `requestInput`.
+5. Simplify the crypto success recorder to consume only static resolved options.
+6. Update unit and type tests.
+7. Update the existing changeset rather than adding another changeset for the same
+   unreleased feature.
+8. Rebuild MPPX and return `taxServer.js` to the resolver form using
+   `Errors.BadRequestError`.
 
-1. `src/Method.ts`
-   - Add and document the preparation context and hook types.
-   - Add the hook to server and `toServer` types.
-   - Ensure exported types preserve method request and credential generics.
-2. `src/server/Mppx.ts`
-   - Plumb the hook through `Mppx.create()` and `createMethodFn()`.
-   - Split validation, preparation, and terminal settlement into explicit phases.
-   - Preserve current payment failure events and response conversion.
-   - Enforce canonical-request equivalence after preparation.
-   - Put the prepared value into success `requestInput` without changing canonical
-     `request` or the envelope.
-   - Do not call preparation from `validateCredential()`.
-3. `src/stripe/internal/payment-intent.ts`
-   - Update resolver context for pre-settlement execution.
-   - Remove receipt and add credential/envelope/validation context as appropriate.
-   - Continue validating resolver return values.
-4. `src/stripe/server/Charge.ts`
-   - Preserve Connect-before-options ordering.
-   - Pass the richer verified context into the resolver.
-   - Keep all Stripe-controlled PaymentIntent fields protected from overrides.
-5. `src/stripe/server/Methods.ts`
-   - Compose preparation in `withPaymentIntentInput()`.
-   - Remove post-success resolver execution and its fallback catch.
-   - Consume only static resolved options in the PaymentIntent recorder.
-   - Update comments to describe pre-settlement behavior.
-6. Tests and changeset
-   - Update the existing changeset rather than adding a second changeset for the same
-     unreleased feature.
-   - Update the local tax server only after library tests pass.
+Do not modify `src/Method.ts` or `src/server/Mppx.ts` unless testing disproves the
+request-object identity/mutability assumption. The expected implementation is
+Stripe-only.
 
 ## Required tests
-
-### MPPX core
-
-- Preparation is not called for the initial challenge request.
-- Preparation is not called for a forged challenge, expired challenge, malformed
-  credential, invalid payload, or route-binding mismatch.
-- Split lifecycle order is exactly `validate → prepare → broadcast`.
-- Validation failure prevents preparation and broadcast.
-- Preparation failure prevents broadcast.
-- A method without `validate` runs `prepare → verify` or `prepare → broadcast`.
-- `validateCredential()` never calls preparation.
-- A prepared server-only field reaches terminal request input and success
-  `requestInput`.
-- Preparation cannot alter canonical amount, currency, recipient, or method details.
-- `BadRequestError` from preparation produces HTTP 400 problem details.
-- An unexpected preparation error produces a sanitized HTTP 500.
-- Payment failure events fire once with the correct challenge and error.
 
 ### Stripe SPT
 
 - Static option objects remain supported.
-- Resolver is not called on initial 402.
-- Resolver is not called for a forged or malformed credential.
-- Connect resolution and validation happen before the resolver.
+- Resolver is not called for the initial 402.
+- Resolver is not called for forged challenges, malformed credentials, invalid payloads,
+  or route-binding failures.
+- Connect resolution and validation occur before resolver execution.
 - Resolver output is attached to the PaymentIntent.
+- Resolver executes exactly once.
 - Invalid resolver output prevents PaymentIntent creation.
 - `BadRequestError` prevents PaymentIntent creation and produces HTTP 400.
-- An invalid SPT with a legitimate challenge may call the resolver but creates no
-  successful PaymentIntent; document this accepted limitation.
+- A legitimate challenge with an invalid SPT may invoke the resolver; document this
+  accepted limitation.
 
-### Stripe crypto
+### Stripe crypto wrappers
 
-- Resolver runs after method validation and before broadcast for a signed transaction.
-- Resolver failure prevents server broadcast.
-- Resolver is invoked once per normal composed payment.
-- The resolved object reaches PaymentIntent recording after success.
-- The options function and resolved object never reach the underlying rail's validate,
-  broadcast, verify, or respond hooks.
-- Static objects preserve existing behavior.
-- Metadata merging and Stripe fallback behavior unrelated to resolver failure remain
-  unchanged.
-- Cover the chosen policy for hash/push credentials explicitly.
+- Exact order for a split method is `validate → resolver → broadcast`.
+- Validation failure prevents resolver execution and broadcast.
+- Resolver failure prevents underlying broadcast.
+- A method without `validate` runs `resolver → verify`.
+- `mppx.validateCredential()` invokes underlying validation but not the resolver.
+- Resolver executes exactly once in a normal composed payment.
+- Underlying validate, broadcast, verify, and respond never receive
+  `paymentIntentOptions`.
+- The resolved object, not the function, reaches `onPaymentSuccess` through
+  `requestInput`.
+- The resolved options reach Stripe PaymentIntent recording after successful broadcast.
+- Static option behavior remains unchanged.
+- Existing metadata merge precedence remains unchanged.
+- Cover transaction, proof, and hash credential behavior where their timing differs.
+
+### Request isolation and security
+
+- Concurrent requests do not observe each other's resolved options.
+- Resolver replacement mutates only the current request-input object.
+- Neither the resolver nor resolved options appear in the serialized challenge.
+- Canonical amount, currency, recipient, and method details remain unchanged.
+- A resolver cannot use returned options to override Stripe-controlled PaymentIntent
+  fields.
 
 ### Type tests
 
 - Direct `stripe.charge()` accepts synchronous and asynchronous resolvers.
-- `stripe.create().defaultMethods()` compose inputs accept the resolver.
-- Resolver context exposes the selected public fields.
+- `stripe.create().defaultMethods()` compose inputs accept resolvers.
+- Resolver context exposes challenge, credential, envelope, and canonical request.
+- Receipt is absent from the pre-payment context.
 - Static option object types remain unchanged.
 
 ### Tax server smoke tests
 
 - Valid body without credential returns 402 and makes zero Tax calls.
-- Malformed or unregistered credential makes zero Tax calls.
-- Invalid Tempo credential fails validation before Tax.
-- Valid signed Tempo credential creates Tax only after validation and before broadcast.
-- Tax-location failure returns HTTP 400 and does not broadcast or create an SPT
-  PaymentIntent.
-- Valid SPT credential creates Tax and attaches it during PaymentIntent creation.
-- Repeating a request with the same challenge ID reuses the same idempotency key.
+- Invalid Tempo credential fails validation before the resolver.
+- Valid signed Tempo transaction credential creates Tax after validation and before
+  broadcast.
+- Tax-location failure returns HTTP 400 and prevents server-controlled broadcast or SPT
+  PaymentIntent creation.
+- Valid SPT credential creates Tax and attaches it to the PaymentIntent.
+- Retrying the same challenge reuses `mpp_tax_<challenge-id>`.
 
-## Alternatives considered and rejected
+## Alternatives considered
+
+### Add a generic MPPX preparation hook
+
+Rejected as unnecessary. The Stripe wrapper already intercepts terminal hooks, and
+MPPX already provides the correct validate-before-broadcast ordering.
 
 ### Always calculate Tax before issuing the challenge
 
-Simple and produces direct HTTP errors, but creates billable calculations for every
-unpaid initial request.
+Simple, but creates billable calculations for unpaid initial requests.
 
-### Check only for credential presence in application code
+### Check for credential presence in application code
 
-This is the current local workaround. It avoids initial-request Tax calls and lets
-application errors propagate, but unvalidated credentials can trigger calculations
-and every application must understand method capabilities.
+This is the current local workaround. It avoids initial-request Tax calls, but every
+application must inspect method capabilities and unvalidated SPT credentials can still
+trigger calculations.
 
 ### Call `verifyCredential()` before calculating Tax
 
-Rejected because it is mutating. It aliases `broadcastCredential()` and may settle
-the payment.
+Rejected because it aliases broadcast and can settle the payment.
 
 ### Call `validateCredential()` unconditionally
 
-Rejected because methods without `validate`, including SPT, throw
-`VerificationFailedError` saying non-mutating validation is unsupported.
+Rejected because methods without non-mutating validation, including SPT, throw a
+`VerificationFailedError`.
 
-### Resolve all crypto options in `onPaymentSuccess`
+### Resolve crypto options in `onPaymentSuccess`
 
-This is the current branch behavior. It is acceptable for best-effort metadata but
-too late for Tax validation because payment has already settled.
+This is the current branch behavior. It is too late for Tax or any other option whose
+failure must prevent server-controlled settlement.
 
-### Store resolved options in a global map keyed by challenge ID
+### Store resolved options by challenge ID
 
 Rejected due to concurrency, cleanup, memory-leak, replay, and multi-process concerns.
-Request-local propagation through the preparation return value is safer.
+The existing request-input object is already the appropriate request-local carrier.
 
-### Invoke the resolver twice and rely only on Stripe idempotency
+### Invoke the resolver twice and rely on Stripe idempotency
 
-Rejected because it adds API traffic, complicates failure semantics, and assumes
-idempotent replay has no incremental billing or operational cost.
+Rejected because it adds API traffic and complicates failure and billing semantics.
 
-### Put the address or resolved Tax Calculation in the challenge
+### Put the address or calculation in the challenge
 
-Deferred. It would challenge-bind more state but affects protocol-visible request
-schemas and was explicitly out of scope for this iteration.
+Deferred. It changes protocol-visible schemas and is outside this iteration.
 
 ## Backward compatibility and rollout
 
 - MPPX is pre-v1; this remains a patch changeset under repository policy.
 - Static `paymentIntentOptions` must remain source- and runtime-compatible.
-- The resolver feature is unreleased on the working branch, so changing its context
-  from optional receipt to pre-settlement fields does not require a migration notice.
-- The generic preparation hook is additive.
-- Run formatting, lint, TypeScript build, focused Stripe/core tests, and the full
-  feasible Node suite with `VITE_TEMPO_NETWORK=none`. Chain-backed tests require a
-  working Tempo RPC and must be reported separately when unavailable.
-- Build the local package before exercising `taxServer.js` so its `mppx` dependency
-  resolves the updated `dist` output.
+- The resolver is unreleased on the working branch, so changing its context before the
+  PR merges does not require a migration notice.
+- No MPPX core API surface should change.
+- Run formatting, lint, TypeScript build, focused Stripe tests, and all feasible Node
+  tests. Chain-backed tests require a working Tempo RPC and should be reported
+  separately when unavailable.
+- Build the local package before testing `taxServer.js` so the local dependency uses
+  the updated `dist` output.
 
 ## Definition of done
 
-The work is complete when an initial tax-server request returns a 402 without a Tax
-call; a valid signed Tempo transaction credential is non-destructively validated,
-then causes exactly one Tax resolver execution before broadcast; an SPT resolver runs
-after Connect preparation and immediately before PaymentIntent creation; invalid tax
-locations return actionable HTTP 400 responses without initiating a server-controlled
-payment; and resolved options reach post-payment Stripe recording without entering the
-canonical challenge or relying on shared mutable state.
+The work is complete when an initial tax-server request returns 402 without a Tax call;
+a valid signed Tempo transaction credential is non-destructively validated before the
+resolver and broadcast; an SPT resolver runs after Connect preparation and immediately
+before PaymentIntent creation; resolver failures return safe, actionable HTTP errors
+and prevent server-controlled settlement; and resolved options reach post-payment
+Stripe recording without entering the canonical challenge, running twice, or relying
+on shared mutable state.
