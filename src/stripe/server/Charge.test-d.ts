@@ -74,9 +74,12 @@ test('accepts a typed PaymentIntent options resolver', () => {
     amount: '1',
     currency: 'usd',
     decimals: 2,
-    paymentIntentOptions({ challenge, receipt, request }) {
+    paymentIntentOptions({ challenge, credential, envelope, request }) {
       expectTypeOf(challenge.id).toEqualTypeOf<string>()
-      expectTypeOf(receipt).toEqualTypeOf<import('mppx').Receipt.Receipt | undefined>()
+      expectTypeOf(credential.challenge.id).toEqualTypeOf<string>()
+      expectTypeOf(envelope).toEqualTypeOf<
+        import('mppx').Method.VerifiedChallengeEnvelope | undefined
+      >()
       expectTypeOf(request).toEqualTypeOf<Record<string, unknown>>()
       return Promise.resolve({ metadata: { challenge_id: challenge.id } })
     },

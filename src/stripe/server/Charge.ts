@@ -191,6 +191,8 @@ export function charge<const parameters extends charge.Parameters>(parameters: p
       })
       const paymentIntentOptions = await PaymentIntent.resolve(paymentIntentOptionsInput, {
         challenge,
+        credential,
+        envelope,
         request: resolvedRequest,
       })
       const {

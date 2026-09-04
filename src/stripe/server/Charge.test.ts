@@ -1,4 +1,4 @@
-import { Challenge, Credential, Receipt } from 'mppx'
+import { Challenge, Credential, Errors, Receipt } from 'mppx'
 import { Mppx, stripe } from 'mppx/server'
 import { afterEach, describe, expect, test, vi } from 'vp/test'
 import * as Http from '~test/Http.js'
@@ -250,8 +250,21 @@ describe('stripe.charge with client', () => {
 
   test('behavior: resolves PaymentIntent options after challenge validation', async () => {
     const { client, create } = createMockStripeClient()
+    const calls: string[] = []
+    const connect = vi.fn(() => {
+      calls.push('connect')
+      return { stripeAccount: 'acct_123' }
+    })
     const paymentIntentOptions = vi.fn(
-      async ({ challenge, request }: StripeCharge.ResolvePaymentIntentOptionsContext) => {
+      async ({
+        challenge,
+        credential,
+        envelope,
+        request,
+      }: StripeCharge.ResolvePaymentIntentOptionsContext) => {
+        calls.push('resolve')
+        expect(credential.challenge).toEqual(challenge)
+        expect(envelope?.credential).toEqual(credential)
         expect(request.amount).toBe('100')
         return {
           hooks: { inputs: { tax: { calculation: `taxcalc_${challenge.id}` } } },
@@ -260,7 +273,14 @@ describe('stripe.charge with client', () => {
       },
     )
     const server = Mppx.create({
-      methods: [stripe.charge({ client, networkId: 'internal', paymentMethodTypes: ['card'] })],
+      methods: [
+        stripe.charge({
+          client,
+          connect,
+          networkId: 'internal',
+          paymentMethodTypes: ['card'],
+        }),
+      ],
       realm,
       secretKey,
     })
@@ -298,6 +318,7 @@ describe('stripe.charge with client', () => {
     )
 
     expect(result.status).toBe(200)
+    expect(calls).toEqual(['connect', 'resolve'])
     expect(paymentIntentOptions).toHaveBeenCalledOnce()
     expect(create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -306,6 +327,42 @@ describe('stripe.charge with client', () => {
       }),
       expect.anything(),
     )
+  })
+
+  test('error: returns a resolver BadRequestError without creating a PaymentIntent', async () => {
+    const { client, create } = createMockStripeClient()
+    const server = Mppx.create({
+      methods: [stripe.charge({ client, networkId: 'internal', paymentMethodTypes: ['card'] })],
+      realm,
+      secretKey,
+    })
+    const handle = server.charge({
+      amount: '1',
+      currency: 'usd',
+      decimals: 2,
+      paymentIntentOptions: async () => {
+        throw new Errors.BadRequestError({ reason: 'invalid tax location' })
+      },
+    })
+    const firstResult = await handle(new Request('https://example.com'))
+    if (firstResult.status !== 402) throw new Error()
+    const challenge = Challenge.fromResponse(firstResult.challenge)
+    const credential = Credential.from({ challenge, payload: { spt: 'spt_test_token' } })
+
+    const result = await handle(
+      new Request('https://example.com', {
+        headers: { Authorization: Credential.serialize(credential) },
+      }),
+    )
+
+    expect(result.status).toBe(402)
+    if (result.status !== 402) throw new Error()
+    expect(result.challenge.status).toBe(400)
+    await expect(result.challenge.json()).resolves.toMatchObject({
+      detail: 'Bad request: invalid tax location.',
+      status: 400,
+    })
+    expect(create).not.toHaveBeenCalled()
   })
 
   test('behavior: applies Connect settlement parameters in client call', async () => {

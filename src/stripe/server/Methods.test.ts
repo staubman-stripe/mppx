@@ -3,7 +3,6 @@ import { describe, expect, test, vi } from 'vp/test'
 
 import { sdkIdentifier } from '../../internal/version.js'
 import type { AnyServer } from '../../Method.js'
-import type * as PaymentIntent from '../internal/payment-intent.js'
 import type { StripeClient } from '../internal/types.js'
 
 function createMockStripeClient(): StripeClient {
@@ -236,71 +235,29 @@ describe('stripe.create() PI recording', () => {
     expect(client.paymentIntents.create).toHaveBeenCalledOnce()
   })
 
-  test('resolves PaymentIntent options after crypto payment success', async () => {
+  test('does not execute an unresolved PaymentIntent options function after payment', async () => {
     const client = createMockStripeClient()
+    const paymentIntentOptions = vi.fn(() => ({ customer: 'cus_123' }))
     const mp = stripe({
       client,
       networkId: 'test-profile',
       livemode: false,
       depositAddresses: mockResolver,
     })
-    const paymentIntentOptions = vi.fn(
-      async ({ challenge, receipt, request }: PaymentIntent.ResolveOptionsContext) => ({
-        hooks: { inputs: { tax: { calculation: `taxcalc_${challenge.id}` } } },
-        metadata: { transaction: receipt?.reference ?? '', amount: String(request.amount) },
-      }),
-    )
     const methods = await mp.defaultMethods()
     const tempoMethod = findMethod(methods, 'tempo', 'charge')
 
     await tempoMethod.onPaymentSuccess!({
-      challenge: { id: 'challenge_123', intent: 'charge', realm: 'api.example.com' } as any,
+      challenge: { id: 'challenge_123', intent: 'charge' } as never,
       receipt: { reference: '0xtx123' },
       request: { amount: '500000' },
       requestInput: { paymentIntentOptions },
     })
 
-    expect(paymentIntentOptions).toHaveBeenCalledOnce()
+    expect(paymentIntentOptions).not.toHaveBeenCalled()
     expect(client.paymentIntents.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        hooks: { inputs: { tax: { calculation: 'taxcalc_challenge_123' } } },
-        metadata: expect.objectContaining({ amount: '500000', transaction: '0xtx123' }),
-      }),
+      expect.not.objectContaining({ customer: 'cus_123' }),
       expect.anything(),
-    )
-  })
-
-  test('records crypto payments without options when their resolver fails', async () => {
-    const client = createMockStripeClient()
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
-    const mp = stripe({
-      client,
-      networkId: 'test-profile',
-      livemode: false,
-      depositAddresses: mockResolver,
-    })
-    const methods = await mp.defaultMethods()
-    const tempoMethod = findMethod(methods, 'tempo', 'charge')
-
-    await tempoMethod.onPaymentSuccess!({
-      challenge: { id: 'challenge_123', intent: 'charge', realm: 'api.example.com' } as any,
-      receipt: { reference: '0xtx123' },
-      request: { amount: '500000' },
-      requestInput: {
-        paymentIntentOptions: async () => {
-          throw new Error('Tax API unavailable')
-        },
-      },
-    })
-
-    expect(client.paymentIntents.create).toHaveBeenCalledOnce()
-    expect(client.paymentIntents.create).toHaveBeenCalledWith(
-      expect.not.objectContaining({ hooks: expect.anything() }),
-      expect.anything(),
-    )
-    expect(error).toHaveBeenCalledWith(
-      '[stripe] failed to resolve PaymentIntent options; recording without them:',
-      expect.any(Error),
     )
   })
 
@@ -376,6 +333,164 @@ describe('stripe.create() canOffer minimum amount', () => {
 })
 
 describe('stripe.create() custom hook composition', () => {
+  test('resolves PaymentIntent options after validation and before broadcast', async () => {
+    const client = createMockStripeClient()
+    const calls: string[] = []
+    const validate = vi.fn(async () => {
+      calls.push('validate')
+      return {} as never
+    })
+    const broadcast = vi.fn(async () => {
+      calls.push('broadcast')
+      return {
+        method: 'solana',
+        reference: '0xsolhash',
+        status: 'success' as const,
+        timestamp: new Date().toISOString(),
+      }
+    })
+    const paymentIntentOptions = vi.fn(async ({ challenge, credential }) => {
+      calls.push('resolve')
+      expect(credential.challenge).toBe(challenge)
+      return { hooks: { inputs: { tax: { calculation: `taxcalc_${challenge.id}` } } } }
+    })
+    const mp = stripe({
+      client,
+      networkId: 'test-profile',
+      livemode: false,
+      depositAddresses: { tempo: '0xtempoaddr', solana: 'SOLaddr' },
+    })
+    const methods = mp.defaultMethods().additional({
+      solana: (_address) =>
+        ({
+          name: 'solana',
+          intent: 'charge',
+          schema: {
+            credential: { payload: { parse: (x: unknown) => x } },
+            request: { parse: (x: unknown) => x },
+          },
+          broadcast,
+          validate,
+        }) as AnyServer,
+    })
+    const method = findMethod(methods, 'solana', 'charge')
+    const request = await method.request!({ request: { amount: '10000', paymentIntentOptions } })
+    const challenge = { id: 'challenge_123', intent: 'charge' }
+    const credential = { challenge, payload: {} }
+    const context = { credential, request } as never
+
+    await method.validate!(context)
+    expect(calls).toEqual(['validate'])
+    expect(paymentIntentOptions).not.toHaveBeenCalled()
+
+    const receipt = await method.broadcast!(context)
+    expect(calls).toEqual(['validate', 'resolve', 'broadcast'])
+    expect(paymentIntentOptions).toHaveBeenCalledOnce()
+    expect(request.paymentIntentOptions).toEqual({
+      hooks: { inputs: { tax: { calculation: 'taxcalc_challenge_123' } } },
+    })
+
+    await method.onPaymentSuccess!({
+      challenge: challenge as never,
+      receipt,
+      request: { amount: '10000' },
+      requestInput: request,
+    })
+    expect(client.paymentIntents.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hooks: { inputs: { tax: { calculation: 'taxcalc_challenge_123' } } },
+      }),
+      expect.anything(),
+    )
+  })
+
+  test('does not broadcast when PaymentIntent option resolution fails', async () => {
+    const client = createMockStripeClient()
+    const broadcast = vi.fn()
+    const mp = stripe({
+      client,
+      networkId: 'test-profile',
+      livemode: false,
+      depositAddresses: { tempo: '0xtempoaddr', solana: 'SOLaddr' },
+    })
+    const methods = mp.defaultMethods().additional({
+      solana: (_address) =>
+        ({
+          name: 'solana',
+          intent: 'charge',
+          schema: {
+            credential: { payload: { parse: (x: unknown) => x } },
+            request: { parse: (x: unknown) => x },
+          },
+          broadcast,
+        }) as AnyServer,
+    })
+    const method = findMethod(methods, 'solana', 'charge')
+    const error = new Error('Tax API unavailable')
+    const request = await method.request!({
+      request: {
+        amount: '10000',
+        paymentIntentOptions: async () => {
+          throw error
+        },
+      },
+    })
+
+    await expect(
+      method.broadcast!({
+        credential: { challenge: { id: 'challenge_123' }, payload: {} },
+        request,
+      } as never),
+    ).rejects.toBe(error)
+    expect(broadcast).not.toHaveBeenCalled()
+  })
+
+  test('resolves PaymentIntent options before a legacy verify hook', async () => {
+    const client = createMockStripeClient()
+    const calls: string[] = []
+    const verify = vi.fn(async () => {
+      calls.push('verify')
+      return {
+        method: 'solana',
+        reference: '0xsolhash',
+        status: 'success' as const,
+        timestamp: new Date().toISOString(),
+      }
+    })
+    const paymentIntentOptions = vi.fn(() => {
+      calls.push('resolve')
+      return { metadata: { order: 'order_123' } }
+    })
+    const mp = stripe({
+      client,
+      networkId: 'test-profile',
+      livemode: false,
+      depositAddresses: { tempo: '0xtempoaddr', solana: 'SOLaddr' },
+    })
+    const methods = mp.defaultMethods().additional({
+      solana: (_address) =>
+        ({
+          name: 'solana',
+          intent: 'charge',
+          schema: {
+            credential: { payload: { parse: (x: unknown) => x } },
+            request: { parse: (x: unknown) => x },
+          },
+          verify,
+        }) as AnyServer,
+    })
+    const method = findMethod(methods, 'solana', 'charge')
+    const request = await method.request!({ request: { amount: '10000', paymentIntentOptions } })
+
+    await method.verify({
+      credential: { challenge: { id: 'challenge_123' }, payload: {} },
+      request,
+    } as never)
+
+    expect(calls).toEqual(['resolve', 'verify'])
+    expect(request.paymentIntentOptions).toEqual({ metadata: { order: 'order_123' } })
+  })
+
   test('keeps PaymentIntent options out of custom rail lifecycle hooks', async () => {
     const client = createMockStripeClient()
     const parseStrictRequest = (request: Record<string, unknown>) => {

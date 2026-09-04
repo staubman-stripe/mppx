@@ -2,4 +2,4 @@
 'mppx': patch
 ---
 
-Added lazy request-scoped PaymentIntent option resolvers for Stripe payments.
+Added request-scoped PaymentIntent option resolvers that run before terminal Stripe payments.

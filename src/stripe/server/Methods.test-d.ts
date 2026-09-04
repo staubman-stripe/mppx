@@ -16,9 +16,9 @@ test('async defaultMethods() produces types compose can use', async () => {
       {
         amount: '0.01',
         description: 'test',
-        paymentIntentOptions({ challenge, receipt }: stripe.ResolvePaymentIntentOptionsContext) {
+        paymentIntentOptions({ challenge, credential }: stripe.ResolvePaymentIntentOptionsContext) {
           expectTypeOf(challenge.id).toEqualTypeOf<string>()
-          expectTypeOf(receipt).toEqualTypeOf<import('mppx').Receipt.Receipt | undefined>()
+          expectTypeOf(credential.challenge.id).toEqualTypeOf<string>()
           return {
             customer: 'cus_123',
             hooks: { inputs: { tax: { calculation: 'taxcalc_123' } } },

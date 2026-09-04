@@ -1,6 +1,6 @@
 # Pre-settlement PaymentIntent option resolution
 
-Status: implementation specification; not yet implemented
+Status: implemented on the working branch; pending review
 
 Working branch: `staubman/resolved-pi-options`
 
