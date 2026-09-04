@@ -561,12 +561,12 @@ function withPaymentIntentInput(method: Method.AnyServer): Method.AnyServer {
 async function resolvePaymentIntentOptions(
   context: Method.VerifyContext<Method.AnyServer>,
 ): Promise<void> {
-  const { paymentIntentOptions, ...request } = context.request
+  const { paymentIntentOptions } = context.request
   const resolved = await PaymentIntent.resolve(paymentIntentOptions, {
     challenge: context.credential.challenge,
     credential: context.credential,
     envelope: context.envelope,
-    request,
+    request: context.envelope?.request ?? context.credential.challenge.request,
   })
   // MPPX later snapshots this request-local input for onPaymentSuccess. Replacing
   // only the schema-stripped field keeps the canonical challenge unchanged.

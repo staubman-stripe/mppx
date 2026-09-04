@@ -349,9 +349,10 @@ describe('stripe.create() custom hook composition', () => {
         timestamp: new Date().toISOString(),
       }
     })
-    const paymentIntentOptions = vi.fn(async ({ challenge, credential }) => {
+    const paymentIntentOptions = vi.fn(async ({ challenge, credential, request }) => {
       calls.push('resolve')
       expect(credential.challenge).toBe(challenge)
+      expect(request.amount).toBe('500000')
       return { hooks: { inputs: { tax: { calculation: `taxcalc_${challenge.id}` } } } }
     })
     const mp = stripe({
@@ -375,9 +376,9 @@ describe('stripe.create() custom hook composition', () => {
     })
     const method = findMethod(methods, 'solana', 'charge')
     const request = await method.request!({ request: { amount: '10000', paymentIntentOptions } })
-    const challenge = { id: 'challenge_123', intent: 'charge' }
+    const challenge = { id: 'challenge_123', intent: 'charge', request: { amount: '500000' } }
     const credential = { challenge, payload: {} }
-    const context = { credential, request } as never
+    const context = { credential, envelope: { request: challenge.request }, request } as never
 
     await method.validate!(context)
     expect(calls).toEqual(['validate'])
@@ -457,8 +458,9 @@ describe('stripe.create() custom hook composition', () => {
         timestamp: new Date().toISOString(),
       }
     })
-    const paymentIntentOptions = vi.fn(() => {
+    const paymentIntentOptions = vi.fn(({ request }) => {
       calls.push('resolve')
+      expect(request.amount).toBe('500000')
       return { metadata: { order: 'order_123' } }
     })
     const mp = stripe({
@@ -483,7 +485,10 @@ describe('stripe.create() custom hook composition', () => {
     const request = await method.request!({ request: { amount: '10000', paymentIntentOptions } })
 
     await method.verify({
-      credential: { challenge: { id: 'challenge_123' }, payload: {} },
+      credential: {
+        challenge: { id: 'challenge_123', request: { amount: '500000' } },
+        payload: {},
+      },
       request,
     } as never)
 
@@ -552,11 +557,12 @@ describe('stripe.create() custom hook composition', () => {
     })
 
     expect(request).toHaveProperty('paymentIntentOptions')
-    const context = { credential: {} as never, request }
+    const credential = { challenge: { request: { amount: '10000' } }, payload: {} }
+    const context = { credential, request } as never
     await method.validate!(context)
     const receipt = await method.broadcast!(context)
     await method.verify(context)
-    await method.respond!({ credential: {} as never, receipt, request } as never)
+    await method.respond!({ credential, receipt, request } as never)
     expect(validate).toHaveBeenCalledOnce()
     expect(broadcast).toHaveBeenCalledOnce()
     expect(verify).toHaveBeenCalledOnce()
