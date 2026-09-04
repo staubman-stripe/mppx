@@ -31,6 +31,7 @@ import { charge as clientCharge } from '../../client/Charge.js'
 import * as Methods from '../../Methods.js'
 import * as ClientOps from '../client/ChannelOps.js'
 import { sessionManager as precompileSessionManager } from '../client/SessionManager.js'
+import * as Chain from '../precompile/Chain.js'
 import * as Channel from '../precompile/Channel.js'
 import { escrowAbi } from '../precompile/escrow.abi.js'
 import { tip20ChannelEscrow } from '../precompile/Protocol.js'
@@ -3496,6 +3497,43 @@ describe('precompile server session unit guardrails', () => {
     expect(stored.highestVoucher?.signature).toBe(higherVoucher.signature)
   })
 
+  async function createCloseRollbackHarness() {
+    const rawStore = Store.memory()
+    const store = channelStore(rawStore)
+    const openPayload = await createOpenPayload()
+    await persistPrecompileChannel(store, openPayload, { payee: payer.address })
+    const method = session({
+      account: payer,
+      amount: '1',
+      chainId,
+      currency: token,
+      decimals: 0,
+      recipient: payee,
+      store: rawStore,
+      unitType: 'request',
+      getClient: () => createStateClient(payer),
+    })
+    const payload = await ClientOps.createClosePayload(
+      createSigningClient(),
+      payer,
+      openPayload.descriptor,
+      Types.uint96(100n),
+      chainId,
+    )
+    return {
+      openPayload,
+      store,
+      verify: () =>
+        method.verify({
+          credential: {
+            challenge: makeChallenge(openPayload.channelId),
+            payload,
+          },
+          request: verifyRequest(openPayload.channelId),
+        }),
+    }
+  }
+
   test('marks pending precompile close before broadcast and restores it when broadcast fails', async () => {
     const rawStore = Store.memory()
     const store = channelStore(rawStore)
@@ -3526,7 +3564,7 @@ describe('precompile server session unit guardrails', () => {
                   functionName: 'getChannelState',
                   result: { settled: 0n, deposit: 1_000n, closeRequestedAt: 0 },
                 })
-              if (args.method === 'eth_getTransactionCount') {
+              if (args.method === 'eth_sendRawTransaction') {
                 observedPending =
                   (await store.getChannel(openPayload.channelId))!.closeRequestedAt !== 0n
                 throw new Error('broadcast failed')
@@ -3558,6 +3596,82 @@ describe('precompile server session unit guardrails', () => {
     ).rejects.toThrow(/broadcast failed/)
     expect(observedPending).toBe(true)
     expect((await store.getChannel(openPayload.channelId))!.closeRequestedAt).toBe(0n)
+  })
+
+  test.each(['submission', 'receipt'] as const)(
+    'restores pending precompile close when %s fails',
+    async (failureStage) => {
+      const { openPayload, store, verify } = await createCloseRollbackHarness()
+      let observedPending = false
+      const closeOnChain = vi.spyOn(Chain, 'closeOnChain').mockImplementation(async () => {
+        observedPending = (await store.getChannel(openPayload.channelId))!.closeRequestedAt !== 0n
+        if (failureStage === 'submission') throw new Error('submission failed')
+        return `0x${'ab'.repeat(32)}`
+      })
+      const waitForSuccessfulReceipt = vi
+        .spyOn(Chain, 'waitForSuccessfulReceipt')
+        .mockRejectedValue(new Error('receipt failed'))
+
+      try {
+        await expect(verify()).rejects.toThrow(new RegExp(`${failureStage} failed`))
+        expect(observedPending).toBe(true)
+        expect((await store.getChannel(openPayload.channelId))!.closeRequestedAt).toBe(0n)
+        expect(waitForSuccessfulReceipt).toHaveBeenCalledTimes(failureStage === 'receipt' ? 1 : 0)
+      } finally {
+        closeOnChain.mockRestore()
+        waitForSuccessfulReceipt.mockRestore()
+      }
+    },
+  )
+
+  test.each([
+    {
+      name: 'preserves concurrent channel fields',
+      async mutate(store: ChannelStore.ChannelStore, channelId: Hex) {
+        await store.updateChannel(channelId, (current) =>
+          current ? { ...current, spent: 200n, units: 2 } : current,
+        )
+      },
+      assert(channel: ChannelStore.State | null, _pendingCloseStartedAt: bigint) {
+        expect(channel).toMatchObject({ closeRequestedAt: 0n, spent: 200n, units: 2 })
+      },
+    },
+    {
+      name: 'does not clear a newer pending close',
+      async mutate(store: ChannelStore.ChannelStore, channelId: Hex) {
+        await store.updateChannel(channelId, (current) =>
+          current ? { ...current, closeRequestedAt: current.closeRequestedAt + 1n } : current,
+        )
+      },
+      assert(channel: ChannelStore.State | null, pendingCloseStartedAt: bigint) {
+        expect(channel?.closeRequestedAt).toBe(pendingCloseStartedAt + 1n)
+      },
+    },
+    {
+      name: 'does not recreate a deleted channel',
+      async mutate(store: ChannelStore.ChannelStore, channelId: Hex) {
+        await store.updateChannel(channelId, () => null)
+      },
+      assert(channel: ChannelStore.State | null, _pendingCloseStartedAt: bigint) {
+        expect(channel).toBeNull()
+      },
+    },
+  ])('$name when precompile close submission fails', async ({ assert, mutate }) => {
+    const { openPayload, store, verify } = await createCloseRollbackHarness()
+    let pendingCloseStartedAt = 0n
+    const closeOnChain = vi.spyOn(Chain, 'closeOnChain').mockImplementation(async () => {
+      pendingCloseStartedAt = (await store.getChannel(openPayload.channelId))!.closeRequestedAt
+      expect(pendingCloseStartedAt).not.toBe(0n)
+      await mutate(store, openPayload.channelId)
+      throw new Error('submission failed')
+    })
+
+    try {
+      await expect(verify()).rejects.toThrow(/submission failed/)
+      assert(await store.getChannel(openPayload.channelId), pendingCloseStartedAt)
+    } finally {
+      closeOnChain.mockRestore()
+    }
   })
 
   test('precompile settle returns txHash when channel disappears before final write', async () => {
@@ -3853,7 +3967,7 @@ describe('precompile server session unit guardrails', () => {
     ).rejects.toThrow(/eth_sendRawTransaction/)
   })
 
-  test('rejects server-driven close when sender is not the channel payee or operator', async () => {
+  test('rejects an invalid close sender and restores pending close state', async () => {
     const rawStore = Store.memory()
     const store = channelStore(rawStore)
     const openPayload = await createOpenPayload()
@@ -3885,6 +3999,7 @@ describe('precompile server session unit guardrails', () => {
         request: verifyRequest(openPayload.channelId),
       }),
     ).rejects.toThrow(/tx sender .* is not the channel payee/)
+    expect((await store.getChannel(openPayload.channelId))!.closeRequestedAt).toBe(0n)
   })
 })
 
