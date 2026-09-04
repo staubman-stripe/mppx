@@ -335,7 +335,7 @@ describe('precompile receipt wait', () => {
 })
 
 describe('precompile server transactions', () => {
-  test.each(['settle', 'close'] as const)(
+  test.each(['settle', 'topUp', 'requestClose', 'withdraw', 'close'] as const)(
     'uses expiring nonces for %s without concurrent requests',
     async (operation) => {
       const rpcMethods: string[] = []
@@ -368,7 +368,13 @@ describe('precompile server transactions', () => {
       const signature = `0x${'11'.repeat(65)}` as const
       if (operation === 'settle')
         await Chain.settleOnChain(client, descriptor, 1n, signature, tip20ChannelEscrow, options)
-      else
+      if (operation === 'topUp')
+        await Chain.topUpOnChain(client, descriptor, 1n, tip20ChannelEscrow, options)
+      if (operation === 'requestClose')
+        await Chain.requestCloseOnChain(client, descriptor, tip20ChannelEscrow, options)
+      if (operation === 'withdraw')
+        await Chain.withdrawOnChain(client, descriptor, tip20ChannelEscrow, options)
+      if (operation === 'close')
         await Chain.closeOnChain(client, descriptor, 1n, 1n, signature, tip20ChannelEscrow, options)
 
       expect(transactions).toHaveLength(1)
@@ -422,8 +428,10 @@ describe('precompile server transactions', () => {
     })
     expect(preparedRequests.map(({ feePayer }) => feePayer)).toEqual([true, true])
     expect(preparedRequests.map(({ feeToken }) => feeToken)).toEqual([sourceToken, sourceToken])
+    expect(preparedRequests.map(({ nonceKey }) => nonceKey)).toEqual(['expiring', 'expiring'])
     expect(signedRequests.map(({ feePayer }) => feePayer)).toEqual([true, true])
     expect(signedRequests.map(({ feeToken }) => feeToken)).toEqual([sourceToken, sourceToken])
+    expect(signedRequests.map(({ nonceKey }) => nonceKey)).toEqual(['expiring', 'expiring'])
     expect(rpcMethods.filter((method) => method === 'eth_sendRawTransaction')).toHaveLength(2)
     expect(rpcMethods).not.toContain('eth_sendTransaction')
     expect(rpcMethods).not.toContain('eth_call')

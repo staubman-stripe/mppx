@@ -2,4 +2,4 @@
 'mppx': patch
 ---
 
-Fixed Tempo session close rollback coverage for expiring-nonce transaction broadcasts.
+Expanded Tempo session close rollback and expiring-nonce transaction coverage.
