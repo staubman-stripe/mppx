@@ -1,8 +1,11 @@
-import { stripe } from 'mppx/server'
+import { Challenge, Credential } from 'mppx'
+import { Mppx, stripe } from 'mppx/server'
 import { describe, expect, test, vi } from 'vp/test'
 
 import { sdkIdentifier } from '../../internal/version.js'
+import * as Method from '../../Method.js'
 import type { AnyServer } from '../../Method.js'
+import * as z from '../../zod.js'
 import type { StripeClient } from '../internal/types.js'
 
 function createMockStripeClient(): StripeClient {
@@ -333,6 +336,82 @@ describe('stripe.create() canOffer minimum amount', () => {
 })
 
 describe('stripe.create() custom hook composition', () => {
+  test('propagates resolved options through a composed payment success', async () => {
+    const client = createMockStripeClient()
+    const calls: string[] = []
+    const paymentIntentOptions = vi.fn(({ challenge, request }) => {
+      calls.push('resolve')
+      expect(request.amount).toBe('10000')
+      return { hooks: { inputs: { tax: { calculation: `taxcalc_${challenge.id}` } } } }
+    })
+    const rail = Method.toServer(
+      Method.from({
+        name: 'solana',
+        intent: 'charge',
+        schema: {
+          credential: { payload: z.object({ token: z.string() }) },
+          request: z.pipe(
+            z.object({ amount: z.string() }),
+            z.transform(({ amount }) => ({ amount: String(Number(amount) * 100) })),
+          ),
+        },
+      }),
+      {
+        async validate() {
+          calls.push('validate')
+          return {} as never
+        },
+        async broadcast() {
+          calls.push('broadcast')
+          return {
+            method: 'solana',
+            reference: '0xsolhash',
+            status: 'success',
+            timestamp: new Date().toISOString(),
+          }
+        },
+      },
+    )
+    const machinePayments = stripe({
+      client,
+      networkId: 'test-profile',
+      livemode: false,
+      depositAddresses: { tempo: '0xtempoaddr', solana: 'SOLaddr' },
+    })
+    const methods = machinePayments.defaultMethods().additional({ solana: () => rail })
+    const solanaMethod = findMethod(methods, 'solana', 'charge')
+    const mppx = Mppx.create({
+      methods: [solanaMethod],
+      realm: 'api.example.com',
+      secretKey: 'test-secret-key-test-secret-key-32',
+    })
+    const handle = mppx.compose([solanaMethod, { amount: '100', paymentIntentOptions }])
+
+    const firstResult = await handle(new Request('https://api.example.com/paid'))
+    expect(firstResult.status).toBe(402)
+    if (firstResult.status !== 402) throw new Error()
+    expect(paymentIntentOptions).not.toHaveBeenCalled()
+    const challenge = Challenge.fromResponse(firstResult.challenge)
+    expect(challenge.request.amount).toBe('10000')
+    const credential = Credential.from({ challenge, payload: { token: 'valid' } })
+
+    const paidResult = await handle(
+      new Request('https://api.example.com/paid', {
+        headers: { Authorization: Credential.serialize(credential) },
+      }),
+    )
+
+    expect(paidResult.status).toBe(200)
+    expect(calls).toEqual(['validate', 'resolve', 'broadcast'])
+    expect(paymentIntentOptions).toHaveBeenCalledOnce()
+    expect(client.paymentIntents.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hooks: { inputs: { tax: { calculation: `taxcalc_${challenge.id}` } } },
+      }),
+      expect.anything(),
+    )
+  })
+
   test('resolves PaymentIntent options after validation and before broadcast', async () => {
     const client = createMockStripeClient()
     const calls: string[] = []
