@@ -256,13 +256,21 @@ export function stripe<const P extends stripe.Parameters>(parameters: P): Stripe
   function makeTempoSession(
     params: { recipient: `0x${string}` } & Omit<tempoSession.Parameters, 'currency' | 'recipient'>,
   ): Method.AnyServer {
-    const { recipient, ...rest } = params
+    const { recipient, onSessionSettlement, ...rest } = params
     return tempoSession({
       currency: tempoCurrency,
       recipient,
       ...(!livemode && { testnet: true }),
       ...(hostedTempoFeePayer && { feePayer: hostedTempoFeePayer }),
       ...rest,
+      async onSessionSettlement(context) {
+        await tempoPaymentHandler({
+          intent: 'session',
+          receipt: { reference: context.txHash },
+          request: { amount: context.delta.toString() },
+        })
+        await onSessionSettlement?.(context)
+      },
     } as tempoSession.Parameters) as Method.AnyServer
   }
 
@@ -462,8 +470,14 @@ function createPaymentSuccessHandler(
   connect?: ConnectConfig,
   metadata?: Record<string, string>,
 ) {
-  return (params: { challenge?: any; receipt: any; request: any; requestInput?: any }) => {
-    const { challenge, receipt, request, requestInput } = params
+  return (params: {
+    challenge?: any
+    intent?: string
+    receipt: any
+    request: any
+    requestInput?: any
+  }) => {
+    const { challenge, intent, receipt, request, requestInput } = params
     if (receipt?.reference && request?.amount) {
       const paymentIntentOptionsInput = requestInput?.paymentIntentOptions as
         | PaymentIntent.OptionsInput
@@ -483,7 +497,7 @@ function createPaymentSuccessHandler(
         reference: receipt.reference,
         amount: String(request.amount),
         ...(connect && { connect }),
-        analyticsMetadata: buildAnalytics({ challenge }),
+        analyticsMetadata: buildAnalytics({ challenge, intent }),
         ...(Object.keys(resolvedPaymentIntentOptions).length > 0 && {
           paymentIntentOptions: resolvedPaymentIntentOptions,
         }),
