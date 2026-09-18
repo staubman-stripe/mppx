@@ -129,9 +129,11 @@ export function charge(parameters: charge.Parameters = {}) {
       }
 
       const currency = request.currency as Address
-      const memo = methodDetails?.memo
-        ? (methodDetails.memo as Hex.Hex)
-        : Attribution.encode({ challengeId: challenge.id, clientId, serverId: challenge.realm })
+      const memo = Attribution.encode({
+        challengeId: challenge.id,
+        clientId,
+        serverId: challenge.realm,
+      })
       const transfers = Charge_internal.getTransfers({
         amount,
         methodDetails: {
